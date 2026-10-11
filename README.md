@@ -269,9 +269,5 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-<div align="center">
-
 Built with ♥ by [harishdeivanayagam](https://github.com/harishdeivanayagam)
-
-</div>
 
