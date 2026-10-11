@@ -9,7 +9,7 @@ alwaysApply: true
 A Rust framework for native cross-platform desktop apps (macOS/Windows/Linux) **and web**,
 built directly on `winit` + `wgpu`. **No webview, no Wry/CEF, no JS engine** — the `ui!`
 macro compiles HTML-like markup into an element tree that a custom wgpu renderer paints.
-Reactivity is signals-based (like SolidJS / Svelte 5), not VDOM-diffing.
+Reactivity is signals-based (like modern JS frameworks), not VDOM-diffing.
 
 ## Crate map
 

@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Signals (`html_rs_signals`, re-exported as `html_rs::Signal`)
 
-Signals work like SolidJS / Svelte 5 runes:
+Signals work like the reactivity model of modern JS frameworks:
 
 ```rust
 let count = Signal::new(0i32);
