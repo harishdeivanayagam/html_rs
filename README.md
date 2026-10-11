@@ -1,4 +1,4 @@
-# html.rs — native HTML for the desktop
+# html_rs — Native apps in HTML + Rust
 
 **Write UI in HTML + Tailwind. Render it natively with wgpu. No webview. No JS.**
 
