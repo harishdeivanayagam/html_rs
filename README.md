@@ -97,7 +97,7 @@ layout, paints background/border, and can carry event handlers.
 | `<blockquote>` | ✅ supported | Quoted text with a left accent bar and muted color. |
 | `<code>` / `<kbd>` | ✅ supported | Monospace-styled inline boxes (`code`: tinted background; `kbd`: bordered keycap). |
 | `<nav>` | ✅ supported | Horizontal navigation row (flex row, centered items). |
-| `<span>`, … | 🚧 planned | Renders as a plain box; text sizing via `text-*` classes works on any element. |
+| `<span>` | ✅ supported | Inline text run (selectable like all text tags, I-beam cursor); `text-*` sizing/weight classes work on any element. |
 
 ### Attributes
 
@@ -253,7 +253,9 @@ web/                     Trunk HTML shells (one per example)
 - **Paint**: one instanced draw call for rounded-rect quads (premultiplied
   alpha, sRGB→linear), a second textured pass for `<img>` (local files decoded
   via the `image` crate; remote URLs/wasm fall back to `alt` text), and the
-  glyphon text pass. Shaped text buffers are cached per
+  glyphon text pass. Open `<dialog>`s and `<select>` menus are painted in a
+  final top pass, so they float above elements that come later in tree order.
+  Shaped text buffers are cached per
   node and reused while content/size/wrap are unchanged; on the GPU, only
   quad instances that actually changed are re-uploaded.
 - **Hit testing**: painter's algorithm — topmost-last wins; click/focus/hover
