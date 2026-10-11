@@ -9,10 +9,10 @@ you write declarative **HTML-like markup** with **Tailwind utility classes** in
 a single `ui!` macro — and a custom GPU renderer paints it.
 
 ```rust
-use html_rs::{launch, Signal, ui};
+use html_rs::{launch, State, ui};
 
 fn main() {
-    let count = Signal::new(0i32);
+    let count = State::new(0i32);
 
     launch(move || {
         let count_val = count.get();
@@ -37,8 +37,9 @@ fn main() {
 There is **no webview and no JS engine** anywhere in the stack:
 
 - The `ui!` macro compiles your markup into an `Element` tree at compile time.
-- Signals-based reactivity (like modern **JS frameworks**) re-runs your view
-  closure when signals change — fine-grained, no VDOM diffing.
+- State-based reactivity (like modern **JS frameworks**) re-runs your view
+  closure when state changes — fine-grained updates, no virtual DOM and no
+  DOM patching; repaints diff trees to re-layout only what changed.
 - Layout runs through **taffy** (the same flexbox/grid engine used by Dioxus,
   Bevy UI and others).
 - Painting runs through a **custom wgpu renderer**: instanced SDF rounded-rect
@@ -51,7 +52,7 @@ There is **no webview and no JS engine** anywhere in the stack:
 ```sh
 # Native (macOS / Windows / Linux)
 cargo run --bin 01_hello_world     # static markup + Tailwind
-cargo run --bin 02_counter_app     # signals + event handlers
+cargo run --bin 02_counter_app     # state + event handlers
 cargo run --bin 03_todo_app        # controlled <input>, dynamic lists
 
 # Web (Trunk + wasm32) — same example sources, no code changes
@@ -88,7 +89,7 @@ layout, paints background/border, and can carry event handlers.
 | Attribute | Applies to | Notes |
 |---|---|---|
 | `class` / `className` | all | Tailwind class string (compile-time compiled). |
-| `value` | `<input>` | Controlled value; drive it from a signal. |
+| `value` | `<input>` | Controlled value; drive it from state. |
 | `placeholder` | `<input>` | Shown when `value` is empty. |
 | `onclick` | all | `move \|\| ...` or `move \|e: &PointerEvent\| ...` |
 | `oninput` / `onenter` | `<input>` | `\|text: &str\|` — full new value. |
@@ -169,14 +170,14 @@ the Tailwind ecosystem stay copy-pasteable.
 
 ---
 
-## Reactivity: signals, not a VDOM
+## Reactivity: fine-grained state, not a VDOM
 
-Reactivity follows the **fine-grained signals model popularized by modern JS
+Reactivity follows the **fine-grained state model popularized by modern JS
 frameworks** — reactive state that tracks its readers, and re-runs only the
 code that depends on it:
 
 ```rust
-let count = Signal::new(0i32);          // Signal<T> is Copy — capture freely
+let count = State::new(0i32);           // State<T> is Copy — capture freely
 count.get();                            // tracked read
 count.set(5);                           // write → notify
 count.update(|c| *c += 1);              // mutate in place
@@ -185,17 +186,17 @@ html_rs::batch(|| { /* many writes, one flush */ });
 ```
 
 - Your `launch(move || ui! { ... })` closure runs inside a single **render
-  effect**: every signal read inside it is tracked, and any write schedules
+  effect**: every state read inside it is tracked, and any write schedules
   exactly one re-render (writes inside a `batch` flush once).
-- Event handlers mutate signals; the framework re-runs the view, rebuilds the
-  element tree, and repaints only what a frame needs.
+- Event handlers mutate state; the framework re-runs the view, diffs it
+  against the previous tree, and surgically repatches only what changed.
 - `create_effect` / `create_memo` give you general-purpose reactive primitives.
 
 ## Architecture
 
 ```
-crates/html_rs_signals   fine-grained signals runtime (thread-local, Copy signals)
-crates/html_rs_core      Element/Node tree, event types, Tailwind class compiler
+crates/html_rs_state     fine-grained state runtime (thread-local, Copy state)
+crates/html_rs_core      Element/Node tree, diff engine, event types, Tailwind class compiler
 crates/html_rs_macro     the ui! proc macro (hand-rolled HTML parser, no syn/quote)
 crates/html_rs_render    taffy layout → wgpu quads (WGSL SDF) + glyphon text
 src/                     facade crate: re-exports + winit runtime + launch()
@@ -203,11 +204,18 @@ examples/                desktop + web examples (registered as bins)
 web/                     Trunk HTML shells (one per example)
 ```
 
-- **Layout**: taffy flexbox/grid → physical-pixel boxes.
+- **Layout**: taffy flexbox/grid → physical-pixel boxes. The taffy tree is
+  **persistent**: each repaint diffs the new element tree against the previous
+  one and only re-lays-out changed subtrees (`set_style` / `set_node_context`
+  for in-place patches, teardown + rebuild for structural changes).
 - **Paint**: one instanced draw call for rounded-rect quads (premultiplied
-  alpha, sRGB→linear) + glyphon text pass.
+  alpha, sRGB→linear) + glyphon text pass. Shaped text buffers are cached per
+  node and reused while content/size/wrap are unchanged; on the GPU, only
+  quad instances that actually changed are re-uploaded.
 - **Hit testing**: painter's algorithm — topmost-last wins; click/focus/hover
   dispatch from the runtime to `onclick` / `oninput` handlers.
+- **Skip**: a state write that produces a structurally identical tree
+  (`html_rs_core::equivalent`) triggers no repaint at all.
 
 ## License
 

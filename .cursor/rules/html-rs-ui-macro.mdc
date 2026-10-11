@@ -43,7 +43,7 @@ Rules:
 
 - `<input>`: gets focus on click (blue focus ring), typing dispatches `oninput` with the
   **full new value**, Enter dispatches `onenter` with the current value. It is a
-  *controlled* input: render its value with `value={signal.get()}` and set the signal in
+  *controlled* input: render its value with `value={state.get()}` and set the state in
   `oninput`, or the text won't change.
 - `<button>` and everything else: opaque boxes (flex containers) unless given classes.
 

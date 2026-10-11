@@ -9,14 +9,14 @@ alwaysApply: true
 A Rust framework for native cross-platform desktop apps (macOS/Windows/Linux) **and web**,
 built directly on `winit` + `wgpu`. **No webview, no Wry/CEF, no JS engine** — the `ui!`
 macro compiles HTML-like markup into an element tree that a custom wgpu renderer paints.
-Reactivity is signals-based (like modern JS frameworks), not VDOM-diffing.
+Reactivity is state-based (like modern JS frameworks), not VDOM-diffing.
 
 ## Crate map
 
 | Crate | Role |
 |---|---|
-| `crates/html_rs_signals` | Fine-grained reactive signals (`Signal<T>` is `Copy`), effects, memos, `batch`, `untrack`. Thread-local runtime, single-threaded by design. |
-| `crates/html_rs_core` | `Element`/`Node`/`TextNode` tree, event types (`PointerEvent`, `KeyEventInfo`, handler constructors `click`/`input`/`enter`/`key`), and the **Tailwind class compiler** (`style.rs` → taffy `Style` + paint props; `colors.rs` → Tailwind palette). |
+| `crates/html_rs_state` | Fine-grained reactive state (`State<T>` is `Copy`), effects, memos, `batch`, `untrack`. Thread-local runtime, single-threaded by design. |
+| `crates/html_rs_core` | `Element`/`Node`/`TextNode` tree, event types (`PointerEvent`, `KeyEventInfo`, handler constructors `click`/`input`/`enter`/`key`), the **Tailwind class compiler** (`style.rs` → taffy `Style` + paint props; `colors.rs` → Tailwind palette), and the **tree diff engine** (`diff.rs` → `diff_element`/`equivalent`). |
 | `crates/html_rs_macro` | The `ui!` proc macro: hand-rolled HTML parser over `proc_macro::TokenTree` (no syn/quote). |
 | `crates/html_rs_render` | The renderer: taffy flexbox layout → SDF rounded-rect quads (WGSL, `shader.wgsl`) + glyphon/cosmic-text for text. |
 | root crate `html_rs` | Facade: re-exports everything + `runtime.rs` (winit `ApplicationHandler`, `launch()`) . |
@@ -25,16 +25,25 @@ Dependency direction: `macro → (nothing)`, `core → taffy`, `render → core,
 
 ## Render pipeline (every repaint)
 
-1. A signal write flushes queued effects → the single **render effect** in `runtime.rs`
-   re-invokes the user's view closure → new `Element` tree stored in `Shared.tree`.
-2. `RedrawRequested` → `Renderer::paint`:
-   - build a `TaffyTree<TextSpec>`; text leaves are measured by cosmic-text shaping
-     (`LayoutInput.known_dimensions.width` constrains wrapping),
-   - `compute_layout_with_measure` runs flexbox,
+1. A state write flushes queued effects → the single **render effect** in `runtime.rs`
+   re-invokes the user's view closure. If the new `Element` tree is
+   `html_rs_core::equivalent` to the stored one, the repaint is **skipped**;
+   otherwise the new tree replaces `Shared.tree`.
+2. `RedrawRequested` → `Renderer::paint` (incremental via `PaintState` in `painter.rs`):
+   - diff the new tree against the previous frame's item list, positionally:
+     unchanged subtrees reuse their taffy nodes (skipped by taffy's layout cache);
+     class/content changes patch the existing node (`set_style` / `set_node_context`);
+     structural changes tear down the old taffy nodes and build that subtree fresh;
+   - `compute_layout_with_measure` runs flexbox — only dirty subtrees re-layout;
+     text leaves are measured by cosmic-text shaping (shaped `Rc<Buffer>`s are
+     cached per item and reused while content/size/wrap are unchanged),
    - walk the flat item list (preorder) emitting `Quad`s, shaped `TextItem`s and
      `HitTarget`s (hit testing is "topmost last wins", z-order = tree order).
-3. `Renderer::render`: upload quad instances → glyphon `prepare` text → one render pass
-   (clear → instanced quads → text) → present.
+3. `Renderer::render`: upload **only changed quad-instance ranges** (diff vs previous
+   frame) → glyphon `prepare` text → one render pass (clear → instanced quads →
+   text) → present.
+4. Window resize or scale-factor change resets `PaintState` (full rebuild); steady-
+   state frames are incremental.
 
 ## Coordinate spaces (important)
 
@@ -46,7 +55,7 @@ Dependency direction: `macro → (nothing)`, `core → taffy`, `render → core,
 
 ## Conventions
 
-- All framework types are re-exported from the root crate: `html_rs::{ui, launch, Signal, Element, ...}`.
+- All framework types are re-exported from the root crate: `html_rs::{ui, launch, State, Element, ...}`.
   The macro generates `::html_rs::...` paths, so keep those re-exports intact.
 - Unknown Tailwind classes are silently ignored; known ones live in `core/src/style.rs`.
 - Examples live in `examples/*.rs` and are registered as `[[bin]]` targets

@@ -1,34 +1,34 @@
 ---
-description: How to use html_rs signals — Copy signals, effects, memos, batch/untrack, and the render-effect contract.
+description: How to use html_rs state — Copy state, effects, memos, batch/untrack, and the render-effect contract.
 globs: ["examples/**", "src/**"]
 alwaysApply: false
 ---
 
-# Signals (`html_rs_signals`, re-exported as `html_rs::Signal`)
+# State (`html_rs_state`, re-exported as `html_rs::State`)
 
-Signals work like the reactivity model of modern JS frameworks:
+State works like the reactivity model of modern JS frameworks:
 
 ```rust
-let count = Signal::new(0i32);
+let count = State::new(0i32);
 
 count.get();               // tracked read (subscribes the running effect)
 count.get_untracked();     // read without subscribing
 count.set(5);              // write → notify
 count.update(|c| *c += 1); // mutate in place → notify
 
-let doubled = html_rs::create_memo(move || count.get() * 2); // derived signal
+let doubled = html_rs::create_memo(move || count.get() * 2); // derived state
 ```
 
 ## Rules
 
-- **`Signal<T>` is `Copy`.** Capture it directly in `launch`'s view closure and in every
+- **`State<T>` is `Copy`.** Capture it directly in `launch`'s view closure and in every
   event handler — no `.clone()` needed, unlike `Rc`.
-- Signals are **single-threaded** (thread-local runtime). Don't try to make them `Send`.
+- State is **single-threaded** (thread-local runtime). Don't try to make it `Send`.
 - The app has **one implicit render effect** created inside `launch().run()`: the user's
-  view closure runs inside it, so every `signal.get()` in `ui!` is tracked. Writes queue
-  the effect and it re-runs **at most once per flush** — a handler that sets 3 signals
+  view closure runs inside it, so every `state.get()` in `ui!` is tracked. Writes queue
+  the effect and it re-runs **at most once per flush** — a handler that updates 3 states
   still causes a single rebuild/repaint.
-- Never write to a signal that the same effect is currently reading (self-write writes are
+- Never write to a state value that the same effect is currently reading (self-write writes are
   ignored while the effect runs — see `queue_effect`'s `running_ids` guard).
 - Use `html_rs::batch(|| { ... })` to group many writes; effects flush once at the end.
 - Use `html_rs::untrack(|| ...)` to read without subscribing (e.g. logging inside an effect).
@@ -39,11 +39,11 @@ let doubled = html_rs::create_memo(move || count.get() * 2); // derived signal
 
 ## State pattern
 
-Store domain state in signals created in `main`, then:
+Store domain state in `State` values created in `main`, then:
 
 ```rust
-let todos = Signal::new(Vec::<Todo>::new());
-let draft = Signal::new(String::new());
+let todos = State::new(Vec::<Todo>::new());
+let draft = State::new(String::new());
 
 launch(move || {
     let items = todos.get();                       // subscribe
@@ -54,5 +54,5 @@ launch(move || {
 })
 ```
 
-Mutations that need current state should use `signal.update(|v| ...)` (no TOCTOU between
-`get` and `set`) or helper fns taking `&Signal<...>`.
+Mutations that need current state should use `state.update(|v| ...)` (no TOCTOU between
+`get` and `set`) or helper fns taking `&State<...>`.

@@ -1,7 +1,7 @@
 //! # html.rs — native HTML for the desktop
 //!
 //! Build native cross-platform desktop apps with **winit + wgpu** using
-//! HTML-like syntax, Tailwind classes and signals-based reactivity.
+//! HTML-like syntax, Tailwind classes and state-based reactivity.
 //! No webview, no JS engine, no prebuilt browser — the `ui!` macro compiles
 //! your markup into an element tree that a custom wgpu renderer paints.
 //!
@@ -9,7 +9,7 @@
 //! use html_rs::{launch, ui};
 //!
 //! fn main() {
-//!     let count = html_rs::Signal::new(0);
+//!     let count = html_rs::State::new(0);
 //!     launch(move || {
 //!         ui! {
 //!             <div class="w-full h-full flex items-center justify-center bg-slate-900">
@@ -35,7 +35,7 @@ pub use html_rs_core::{
 };
 pub use html_rs_macro::ui;
 pub use html_rs_render as render;
-pub use html_rs_signals::{batch, create_effect, create_memo, set_flush_hook, untrack, Effect, Signal};
+pub use html_rs_state::{batch, create_effect, create_memo, set_flush_hook, untrack, Effect, State};
 
 mod runtime;
 pub use runtime::{launch, App};

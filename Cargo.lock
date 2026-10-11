@@ -703,7 +703,7 @@ dependencies = [
  "html_rs_core",
  "html_rs_macro",
  "html_rs_render",
- "html_rs_signals",
+ "html_rs_state",
  "pollster",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -735,7 +735,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "html_rs_signals"
+name = "html_rs_state"
 version = "0.1.0"
 
 [[package]]

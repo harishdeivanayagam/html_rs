@@ -20,7 +20,7 @@ pub struct App {
 }
 
 /// Launch an html.rs app with a view function — a closure returning the
-/// element tree, re-evaluated automatically whenever signals it reads change.
+/// element tree, re-evaluated automatically whenever state it reads changes.
 ///
 /// ```ignore
 /// launch(move || ui! { <p class="text-white">"Hello"</p> }).title("Hi").run();
@@ -52,6 +52,7 @@ impl App {
             view: self.view,
             tree: RefCell::new(Element::new("div")),
             dirty: Cell::new(true),
+            ever_rendered: Cell::new(false),
             window: RefCell::new(None),
             renderer: RefCell::new(None),
             draw: RefCell::new(DrawList::empty()),
@@ -60,15 +61,22 @@ impl App {
             modifiers: Cell::new(winit::keyboard::ModifiersState::default()),
         });
 
-        // The render effect: re-runs whenever signals read by the view change,
-        // rebuilding the element tree and scheduling a repaint.
+        // The render effect: re-runs whenever state read by the view changes,
+        // rebuilding the element tree and scheduling a repaint. When the new
+        // tree is structurally equivalent to the previous one (a state write
+        // that changed nothing visible), the repaint is skipped entirely.
         let s = shared.clone();
-        html_rs_signals::create_effect(move || {
+        html_rs_state::create_effect(move || {
             let tree = (s.view)();
-            *s.tree.borrow_mut() = tree;
-            s.dirty.set(true);
-            if let Some(w) = s.window.borrow().as_ref() {
-                w.request_redraw();
+            let changed = !s.ever_rendered.get()
+                || !html_rs_core::equivalent(&s.tree.borrow(), &tree);
+            if changed {
+                s.ever_rendered.set(true);
+                *s.tree.borrow_mut() = tree;
+                s.dirty.set(true);
+                if let Some(w) = s.window.borrow().as_ref() {
+                    w.request_redraw();
+                }
             }
         });
 
@@ -85,6 +93,9 @@ struct Shared {
     view: Box<dyn Fn() -> Element>,
     tree: RefCell<Element>,
     dirty: Cell<bool>,
+    /// Whether the render effect has run at least once (the initial `tree`
+    /// placeholder must not be mistaken for "nothing changed").
+    ever_rendered: Cell<bool>,
     window: RefCell<Option<Arc<Window>>>,
     renderer: RefCell<Option<Renderer>>,
     draw: RefCell<DrawList>,

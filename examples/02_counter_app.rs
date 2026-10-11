@@ -1,16 +1,16 @@
 //! 02 — Counter App
 //!
-//! Demonstrates signals: reads inside `ui!` are tracked, writes (`set` /
+//! Demonstrates state: reads inside `ui!` are tracked, writes (`set` /
 //! `update`) rebuild the view automatically.
 //!
 //! Run: `cargo run --bin 02_counter_app`
 //! Web: `trunk serve web/02_counter_app.html`
 
-use html_rs::{launch, Signal, ui};
+use html_rs::{launch, State, ui};
 
 fn main() {
-    // `Signal<i32>` is Copy — capture it in the view and every handler.
-    let count = Signal::new(0);
+    // `State<i32>` is Copy — capture it in the view and every handler.
+    let count = State::new(0);
 
     launch(move || {
         ui! {
@@ -31,7 +31,7 @@ fn main() {
                             onclick={move || count.set(0)}
                         >"Reset"</button>
                     </div>
-                    <p class="text-slate-500 text-sm">"state lives in a Signal — no re-render loop, no diffing"</p>
+                    <p class="text-slate-500 text-sm">"state lives in a `State` — no re-render loop, no diffing"</p>
                 </div>
             </div>
         }

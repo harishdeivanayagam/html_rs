@@ -18,7 +18,7 @@ fn main() {
                     </p>
                     <div class="flex gap-2 mt-2">
                         <p class="px-3 py-1 bg-slate-900 rounded-md text-sm text-blue-400">"wgpu"</p>
-                        <p class="px-3 py-1 bg-slate-900 rounded-md text-sm text-emerald-400">"signals"</p>
+                        <p class="px-3 py-1 bg-slate-900 rounded-md text-sm text-emerald-400">"state"</p>
                         <p class="px-3 py-1 bg-slate-900 rounded-md text-sm text-amber-400">"tailwind"</p>
                     </div>
                 </div>

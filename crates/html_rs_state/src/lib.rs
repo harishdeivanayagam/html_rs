@@ -1,11 +1,10 @@
-//! # html_rs_signals
+//! # html_rs_state
 //!
-//! Fine-grained reactive **signals** — the same mental model as modern JS
-//! frameworks' signals,
-//! but in Rust and single-threaded (UI state never crosses threads).
+//! Fine-grained reactive **state** — the same mental model as the signals in
+//! modern JS frameworks, but in Rust and single-threaded (UI state never crosses threads).
 //!
 //! ```ignore
-//! let count = Signal::new(0);
+//! let count = State::new(0);
 //!
 //! create_effect(move || {
 //!     println!("count is {}", count.get()); // reads are tracked
@@ -16,7 +15,7 @@
 //! ```
 //!
 //! Key properties:
-//! - `Signal<T>` is [`Copy`] — clone it into closures freely, exactly like JS-framework signals.
+//! - `State<T>` is [`Copy`] — clone it into closures freely, exactly like JS-framework state.
 //! - Reads inside [`create_effect`] / [`create_memo`] are tracked automatically.
 //! - Writes batch automatically: an effect re-runs at most once per "flush".
 //! - [`batch`] groups many writes into a single flush; [`untrack`] reads without subscribing.
@@ -28,7 +27,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::rc::Rc;
 
-/// A set of `effect_id -> ()` subscribers attached to one signal cell.
+/// A set of `effect_id -> ()` subscribers attached to one state cell.
 type Subscribers = Rc<RefCell<HashMap<u64, ()>>>;
 
 struct EffectNode {
@@ -46,7 +45,7 @@ struct Running {
 
 struct Runtime {
     next_id: u64,
-    /// Type-erased signal cells, keyed by signal id.
+    /// Type-erased state cells, keyed by state id.
     cells: HashMap<u64, Box<dyn Any>>,
     effects: HashMap<u64, EffectNode>,
     running: Vec<Running>,
@@ -81,59 +80,59 @@ thread_local! {
 }
 
 // ---------------------------------------------------------------------------
-// Signal
+// State
 // ---------------------------------------------------------------------------
 
-/// A reactive value. `Signal<T>` is [`Copy`], so you can capture it in any
+/// A reactive value. `State<T>` is [`Copy`], so you can capture it in any
 /// number of closures (event handlers, effects, memos) without cloning.
 ///
 /// ```ignore
-/// let count = Signal::new(0);
+/// let count = State::new(0);
 /// count.get();      // tracked read (subscribes the running effect)
 /// count.get_untracked(); // untracked read
 /// count.set(5);     // write → notifies subscribers
 /// count.update(|c| *c += 1); // mutate in place
 /// ```
-pub struct Signal<T: 'static> {
+pub struct State<T: 'static> {
     id: u64,
     _marker: PhantomData<fn() -> T>,
 }
 
-impl<T: 'static> Clone for Signal<T> {
+impl<T: 'static> Clone for State<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: 'static> Copy for Signal<T> {}
+impl<T: 'static> Copy for State<T> {}
 
-impl<T: 'static> PartialEq for Signal<T> {
+impl<T: 'static> PartialEq for State<T> {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
-impl<T: 'static> Eq for Signal<T> {}
+impl<T: 'static> Eq for State<T> {}
 
-impl<T: 'static> fmt::Debug for Signal<T> {
+impl<T: 'static> fmt::Debug for State<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Signal({})", self.id)
+        write!(f, "State({})", self.id)
     }
 }
 
-struct SignalData<T> {
+struct StateData<T> {
     value: RefCell<T>,
     subscribers: Subscribers,
 }
 
-impl<T: 'static> Signal<T> {
-    /// Creates a new signal holding `value`.
+impl<T: 'static> State<T> {
+    /// Creates a new state holding `value`.
     pub fn new(value: T) -> Self {
         let id = RUNTIME.with(|rt| {
             let mut rt = rt.borrow_mut();
             rt.next_id += 1;
             let id = rt.next_id;
             rt.cells
-                .insert(id, Box::new(SignalData::<T> {
+                .insert(id, Box::new(StateData::<T> {
                     value: RefCell::new(value),
                     subscribers: Rc::new(RefCell::new(HashMap::new())),
                 }));
@@ -143,7 +142,7 @@ impl<T: 'static> Signal<T> {
     }
 
     /// Tracked read: returns a clone of the current value and subscribes the
-    /// currently-running effect (if any) to this signal.
+    /// currently-running effect (if any) to this state.
     pub fn get(&self) -> T
     where
         T: Clone,
@@ -161,24 +160,24 @@ impl<T: 'static> Signal<T> {
             let rt = rt.borrow();
             match rt.cells.get(&self.id) {
                 Some(cell) => cell
-                    .downcast_ref::<SignalData<T>>()
-                    .expect("signal type mismatch")
+                    .downcast_ref::<StateData<T>>()
+                    .expect("state type mismatch")
                     .value
                     .borrow()
                     .clone(),
-                None => panic!("signal read after runtime reset"),
+                None => panic!("state read after runtime reset"),
             }
         })
     }
 
-    /// Subscribes the currently-running effect to this signal without reading it.
+    /// Subscribes the currently-running effect to this state without reading it.
     pub fn track(&self) {
         RUNTIME.with(|rt| {
             let mut rt = rt.borrow_mut();
             let subs = match rt.cells.get(&self.id) {
                 Some(cell) => cell
-                    .downcast_ref::<SignalData<T>>()
-                    .expect("signal type mismatch")
+                    .downcast_ref::<StateData<T>>()
+                    .expect("state type mismatch")
                     .subscribers
                     .clone(),
                 None => return,
@@ -201,16 +200,16 @@ impl<T: 'static> Signal<T> {
     /// html.rs re-renders are cheap and idempotent).
     pub fn update(&self, f: impl FnOnce(&mut T)) {
         // Mutate under a short runtime borrow; `f` itself may read/write other
-        // signals, so it must not run under an exclusive borrow.
+        // state, so it must not run under an exclusive borrow.
         {
             RUNTIME.with(|rt| {
                 let rt = rt.borrow();
                 let cell = rt
                     .cells
                     .get(&self.id)
-                    .expect("signal used after drop")
-                    .downcast_ref::<SignalData<T>>()
-                    .expect("signal type mismatch");
+                    .expect("state used after drop")
+                    .downcast_ref::<StateData<T>>()
+                    .expect("state type mismatch");
                 f(&mut cell.value.borrow_mut());
             });
         }
@@ -221,7 +220,7 @@ impl<T: 'static> Signal<T> {
             rt.cells
                 .get(&self.id)
                 .unwrap()
-                .downcast_ref::<SignalData<T>>()
+                .downcast_ref::<StateData<T>>()
                 .unwrap()
                 .subscribers
                 .clone()
@@ -331,7 +330,7 @@ fn drain_effects() {
     });
 }
 
-/// Runs `f` immediately and re-runs it whenever any signal it reads changes.
+/// Runs `f` immediately and re-runs it whenever any state it reads changes.
 /// Returns a handle; effects live for the rest of the app unless [`Effect::stop`] is called.
 pub fn create_effect(f: impl FnMut() + 'static) -> Effect {
     let id = RUNTIME.with(|rt| {
@@ -368,15 +367,15 @@ impl Effect {
     }
 }
 
-/// A derived signal: recomputed lazily-but-eagerly via an internal effect
-/// whenever its inputs change. Reads are tracked like any signal.
+/// A derived state: recomputed lazily-but-eagerly via an internal effect
+/// whenever its inputs change. Reads are tracked like any state.
 ///
 /// ```ignore
-/// let count = Signal::new(2);
+/// let count = State::new(2);
 /// let doubled = create_memo(move || count.get() * 2);
 /// ```
-pub fn create_memo<T: Clone + 'static>(f: impl Fn() -> T + 'static) -> Signal<T> {
-    let out = Signal::new(f());
+pub fn create_memo<T: Clone + 'static>(f: impl Fn() -> T + 'static) -> State<T> {
+    let out = State::new(f());
     let back = out;
     create_effect(move || {
         let v = f();
@@ -431,8 +430,8 @@ mod tests {
 
     #[test]
     fn basic_reactivity() {
-        let count = Signal::new(0);
-        let runs = Signal::new(0);
+        let count = State::new(0);
+        let runs = State::new(0);
         create_effect(move || {
             let _ = count.get();
             runs.update(|r| *r += 1);
@@ -445,9 +444,9 @@ mod tests {
 
     #[test]
     fn batch_coalesces() {
-        let a = Signal::new(0);
-        let b = Signal::new(0);
-        let runs = Signal::new(0);
+        let a = State::new(0);
+        let b = State::new(0);
+        let runs = State::new(0);
         create_effect(move || {
             let _ = (a.get(), b.get());
             runs.update(|r| *r += 1);
@@ -463,7 +462,7 @@ mod tests {
 
     #[test]
     fn memo_is_derived() {
-        let a = Signal::new(2);
+        let a = State::new(2);
         let b = create_memo(move || a.get() * 10);
         assert_eq!(b.get(), 20);
         a.set(5);
@@ -472,8 +471,8 @@ mod tests {
 
     #[test]
     fn untracked_reads_dont_subscribe() {
-        let a = Signal::new(0);
-        let runs = Signal::new(0);
+        let a = State::new(0);
+        let runs = State::new(0);
         create_effect(move || {
             let v = untrack(|| a.get());
             runs.update(|r| *r += v as i32 + 1);

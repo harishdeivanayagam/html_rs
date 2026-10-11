@@ -8,7 +8,7 @@
 
 mod painter;
 
-pub use painter::{paint, DrawList, HitTarget, Quad, TextItem};
+pub use painter::{paint, DrawList, HitTarget, PaintState, Quad, TextItem};
 
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -24,7 +24,7 @@ const CORNERS: [[f32; 2]; 6] = [
 ];
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 struct QuadGpu {
     // [pos.xy, size.xy]
     pos_size: [f32; 4],
@@ -44,6 +44,8 @@ pub struct Renderer {
     corner_buf: wgpu::Buffer,
     instance_buf: wgpu::Buffer,
     instance_capacity: usize,
+    /// Last frame's uploaded instances — used to write only changed ranges.
+    prev_instances: Vec<QuadGpu>,
     camera_buf: wgpu::Buffer,
     camera_bind: wgpu::BindGroup,
     // Text stack.
@@ -53,6 +55,9 @@ pub struct Renderer {
     atlas: glyphon::TextAtlas,
     text_renderer: glyphon::TextRenderer,
     viewport: glyphon::Viewport,
+    /// Persistent layout + paint state (taffy tree, previous items, shaped
+    /// text cache) — enables incremental, surgical re-layout.
+    paint_state: painter::PaintState,
     /// Window clear color (linear RGBA).
     pub clear: [f32; 4],
     width: f32,
@@ -237,6 +242,7 @@ impl Renderer {
             corner_buf,
             instance_buf,
             instance_capacity: 256,
+            prev_instances: Vec::new(),
             camera_buf,
             camera_bind,
             font_system,
@@ -245,6 +251,7 @@ impl Renderer {
             atlas,
             text_renderer,
             viewport,
+            paint_state: painter::PaintState::new(),
             clear: html_rs_core::DEFAULT_BG,
             width: size.width as f32,
             height: size.height as f32,
@@ -264,8 +271,10 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Lays out + paints the tree (CPU side). Returns the draw list, which the
-    /// runtime keeps around for hit-testing.
+    /// Lays out + paints the tree (CPU side). Layout is incremental: only
+    /// subtrees whose elements changed are re-laid-out; unchanged text is not
+    /// re-shaped. Returns the draw list, which the runtime keeps for
+    /// hit-testing.
     pub fn paint(
         &mut self,
         root: &html_rs_core::Element,
@@ -276,6 +285,7 @@ impl Renderer {
         hovered_path: Option<&[u32]>,
     ) -> DrawList {
         painter::paint(
+            &mut self.paint_state,
             root,
             width.max(1.0),
             height.max(1.0),
@@ -313,11 +323,30 @@ impl Renderer {
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
+            // Fresh buffer: nothing from the previous frame is valid.
+            self.prev_instances.clear();
         }
-        if !quads.is_empty() {
-            self.queue
-                .write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(&quads));
+        // Surgical upload: write only the instance ranges that actually
+        // changed since the previous frame (each entry is 64 bytes, so every
+        // range offset stays copy-aligned).
+        let mut i = 0;
+        while i < quads.len() {
+            if i < self.prev_instances.len() && self.prev_instances[i] == quads[i] {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < quads.len() && (i >= self.prev_instances.len() || self.prev_instances[i] != quads[i]) {
+                i += 1;
+            }
+            self.queue.write_buffer(
+                &self.instance_buf,
+                (start * 64) as u64,
+                bytemuck::cast_slice(&quads[start..i]),
+            );
         }
+        self.prev_instances = quads;
+        let quad_count = self.prev_instances.len();
 
         // Prepare text.
         self.viewport.update(
@@ -406,12 +435,12 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if !quads.is_empty() {
+            if quad_count > 0 {
                 pass.set_pipeline(&self.quad_pipeline);
                 pass.set_bind_group(0, &self.camera_bind, &[]);
                 pass.set_vertex_buffer(0, self.corner_buf.slice(..));
                 pass.set_vertex_buffer(1, self.instance_buf.slice(..));
-                pass.draw(0..6, 0..quads.len() as u32);
+                pass.draw(0..6, 0..quad_count as u32);
             }
             if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
                 eprintln!("html.rs: text render failed: {e:?}");

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/html_rs_signals",
+    "crates/html_rs_state",
     "crates/html_rs_core",
     "crates/html_rs_macro",
     "crates/html_rs_render",
@@ -11,7 +11,7 @@ members = [
 name = "html_rs"
 version = "0.1.0"
 edition = "2021"
-description = "Native cross-platform desktop apps with winit + wgpu, written in HTML-like JSX with Tailwind classes and signals-based reactivity. No webview, no JS."
+description = "Native cross-platform desktop apps with winit + wgpu, written in HTML-like JSX with Tailwind classes and state-based reactivity. No webview, no JS."
 license = "MIT"
 # Examples live in `examples/` but are registered as *bins* (see [[bin]]
 # below) so the same files build for desktop (`cargo run --bin ...`) and
@@ -36,7 +36,7 @@ name = "03_todo_app"
 path = "examples/03_todo_app.rs"
 
 [dependencies]
-html_rs_signals = { path = "crates/html_rs_signals" }
+html_rs_state = { path = "crates/html_rs_state" }
 html_rs_core = { path = "crates/html_rs_core" }
 html_rs_macro = { path = "crates/html_rs_macro" }
 html_rs_render = { path = "crates/html_rs_render" }

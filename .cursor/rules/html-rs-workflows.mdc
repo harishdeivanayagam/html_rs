@@ -10,7 +10,7 @@ alwaysApply: false
 
 ```sh
 cargo build                          # whole workspace
-cargo test --workspace               # unit tests (signals, tailwind compiler)
+cargo test --workspace               # unit tests (state runtime, tailwind compiler)
 
 # Native desktop windows (examples are registered as bins):
 cargo run --bin 01_hello_world
@@ -43,7 +43,7 @@ add a new shell file per new example bin.
 - On macOS the app must run from the main thread (winit requirement) — the runtime does
   this; don't spawn winit windows on background threads.
 - If a window opens blank: the render effect only repaints on `RedrawRequested`; check
-  that signal writes happened (no signals = paint-once) and that `Renderer` was created
+  that state writes happened (no writes = paint-once) and that `Renderer` was created
   (on wasm it's async — `ready` is set after `spawn_local` completes).
 - winit 0.30 delivers keyboard modifiers via a separate `ModifiersChanged` event; the
   runtime caches them in `Shared.modifiers` — don't read them off `KeyEvent`.

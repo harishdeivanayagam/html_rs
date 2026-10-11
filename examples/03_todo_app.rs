@@ -1,13 +1,13 @@
 //! 03 — Todo App
 //!
-//! The full stack: signals, dynamic lists (`{Vec<Element>}` children),
+//! The full stack: state, dynamic lists (`{Vec<Element>}` children),
 //! `<input>` with focus/typing/Enter handling, `hover:` styles and
 //! `line-through` decorations.
 //!
 //! Run: `cargo run --bin 03_todo_app`
 //! Web: `trunk serve web/03_todo_app.html`
 
-use html_rs::{launch, ui, Element, Signal};
+use html_rs::{launch, ui, Element, State};
 
 #[derive(Clone)]
 struct Todo {
@@ -16,11 +16,11 @@ struct Todo {
 }
 
 fn main() {
-    let todos = Signal::new(vec![Todo {
+    let todos = State::new(vec![Todo {
         text: "Ship the wgpu renderer".into(),
         done: true,
     }]);
-    let draft = Signal::new(String::new());
+    let draft = State::new(String::new());
 
     launch(move || {
         let items = todos.get();
@@ -89,7 +89,7 @@ fn main() {
     .run();
 }
 
-fn add_todo(todos: &Signal<Vec<Todo>>, draft: &Signal<String>) {
+fn add_todo(todos: &State<Vec<Todo>>, draft: &State<String>) {
     let text = draft.get();
     if !text.trim().is_empty() {
         todos.update(|ts| ts.push(Todo { text: text.trim().to_string(), done: false }));
