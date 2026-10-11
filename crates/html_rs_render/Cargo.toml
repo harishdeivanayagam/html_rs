@@ -11,3 +11,4 @@ taffy = "0.14"
 bytemuck = { version = "1", features = ["derive"] }
 winit = "0.30"
 html_rs_core = { path = "../html_rs_core" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }

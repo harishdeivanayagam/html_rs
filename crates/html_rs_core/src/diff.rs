@@ -32,17 +32,16 @@ fn is_text_leaf(el: &Element) -> bool {
 
 /// Compares `old` and `new` at the same tree position.
 ///
-/// Only *layout-relevant* differences are reported: attributes (e.g. an
-/// `<input>`'s `value`) and event handlers never affect layout, so changing
-/// them alone still yields [`ElementChange::None`] here. Use [`equivalent`]
-/// when attributes matter (skip-repaint check).
+/// Attribute changes (e.g. `open`, `checked`, `type`, `value`) mark the node
+/// [`ElementChange::InPlace`]: several attributes drive renderer behavior
+/// (dialog visibility, check state) even though the *classes* are unchanged.
 pub fn diff_element(old: &Element, new: &Element) -> ElementChange {
     if old.tag != new.tag || is_text_leaf(old) != is_text_leaf(new) {
         return ElementChange::Structure;
     }
 
     let mut change = ElementChange::None;
-    if old.classes != new.classes {
+    if old.classes != new.classes || old.attrs != new.attrs {
         change = ElementChange::InPlace;
     }
 
@@ -148,11 +147,31 @@ mod tests {
     }
 
     #[test]
-    fn attr_change_is_none_for_layout_but_not_equivalent() {
+    fn attr_change_is_in_place_for_layout_but_not_equivalent() {
         let a = Element::new("input").attr("value", "a");
         let b = Element::new("input").attr("value", "ab");
-        assert_eq!(diff_element(&a, &b), ElementChange::None);
+        assert_eq!(diff_element(&a, &b), ElementChange::InPlace);
         assert!(!equivalent(&a, &b));
+    }
+
+    #[test]
+    fn tag_defaults_exist() {
+        use crate::style::{parse_classes, tag_default_classes, Decoration};
+        assert!(!tag_default_classes("ul").is_empty());
+        assert!(!tag_default_classes("a").is_empty());
+        assert!(tag_default_classes("div").is_empty());
+        let out = parse_classes(
+            &tag_default_classes("kbd").iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            1.0,
+        );
+        assert!(out.mono, "kbd defaults include font-mono");
+        assert_eq!(out.decoration, None);
+        let a = parse_classes(
+            &tag_default_classes("a").iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            1.0,
+        );
+        assert_eq!(a.decoration, Some(Decoration::Underline));
+        assert!(a.cursor_pointer);
     }
 
     #[test]

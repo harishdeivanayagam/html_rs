@@ -37,6 +37,8 @@ Rules:
   Also: `oninput={|text: &str| ...}`, `onenter={|text: &str| ...}` (fires on Enter key in an `<input>`),
   `onkeydown={|k| ...}` (`k: &KeyEventInfo`, fields: `key`, `ctrl`, `shift`, `alt`, `meta`).
 - **Attributes**: `value={expr}` / `value="..."` and `placeholder="..."` (used by `<input>`).
+  Passthrough data attributes are also supported: `src` / `alt` (`<img>`), `href` (`<a>`),
+  `type` / `checked` (`<input>`), `selected` (`<option>`), `open` (`<dialog>`).
   Anything else is rejected at compile time (no silent attrs).
 
 ## Elements with behavior
@@ -44,7 +46,22 @@ Rules:
 - `<input>`: gets focus on click (blue focus ring), typing dispatches `oninput` with the
   **full new value**, Enter dispatches `onenter` with the current value. It is a
   *controlled* input: render its value with `value={state.get()}` and set the state in
-  `oninput`, or the text won't change.
+  `oninput`, or the text won't change. `type="search"` renders a pill; `type="checkbox"`
+  and `type="radio"` render native-style square/circle controls driven by the `checked`
+  attribute (≈20px, prepended by the painter so your classes still win).
+- `<img>`: leaf measured from the decoded file's intrinsic size (`src` = local file path;
+  aspect-preserved fit; `alt` text is shown when the image can't be loaded — remote URLs
+  and wasm32 never load, so they always show `alt`).
+- `<ul>`/`<ol>`/`<li>`: bullets/numbers drawn in the list's `pl-6` gutter (tag defaults).
+- `<select>`/`<option>`: box showing the `value` attr (or first option's text) + `▾`
+  chevron; options themselves are never painted.
+- `<dialog>`: hidden unless `open`; when open it's absolutely positioned and centered
+  (auto margins) above the flow.
+- `<a>`: link styling only — `href` is data, no navigation.
+- `<blockquote>` (accent bar), `<code>`/`<kbd>` (monospace), `<table>`/`tr`/`td`/`th`
+  (flex-based grid), `<nav>` (horizontal row): all styled via browser-style **tag default
+  classes** in `tag_default_classes` (`html_rs_core::style`); user classes are appended
+  after the defaults, so they win.
 - `<button>` and everything else: opaque boxes (flex containers) unless given classes.
 
 ## Supported Tailwind subset (crates/html_rs_core/src/style.rs)

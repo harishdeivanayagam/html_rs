@@ -34,6 +34,9 @@ path = "examples/02_counter_app.rs"
 [[bin]]
 name = "03_todo_app"
 path = "examples/03_todo_app.rs"
+[[bin]]
+name = "04_elements"
+path = "examples/04_elements.rs"
 
 [dependencies]
 html_rs_state = { path = "crates/html_rs_state" }

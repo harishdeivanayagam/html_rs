@@ -16,9 +16,9 @@ Reactivity is state-based (like modern JS frameworks), not VDOM-diffing.
 | Crate | Role |
 |---|---|
 | `crates/html_rs_state` | Fine-grained reactive state (`State<T>` is `Copy`), effects, memos, `batch`, `untrack`. Thread-local runtime, single-threaded by design. |
-| `crates/html_rs_core` | `Element`/`Node`/`TextNode` tree, event types (`PointerEvent`, `KeyEventInfo`, handler constructors `click`/`input`/`enter`/`key`), the **Tailwind class compiler** (`style.rs` → taffy `Style` + paint props; `colors.rs` → Tailwind palette), and the **tree diff engine** (`diff.rs` → `diff_element`/`equivalent`). |
+| `crates/html_rs_core` | `Element`/`Node`/`TextNode` tree, event types (`PointerEvent`, `KeyEventInfo`, handler constructors `click`/`input`/`enter`/`key`), the **Tailwind class compiler** (`style.rs` → taffy `Style` + paint props; `colors.rs` → Tailwind palette; `tag_default_classes` gives semantic tags browser-style default classes), and the **tree diff engine** (`diff.rs` → `diff_element`/`equivalent`). |
 | `crates/html_rs_macro` | The `ui!` proc macro: hand-rolled HTML parser over `proc_macro::TokenTree` (no syn/quote). |
-| `crates/html_rs_render` | The renderer: taffy flexbox layout → SDF rounded-rect quads (WGSL, `shader.wgsl`) + glyphon/cosmic-text for text. |
+| `crates/html_rs_render` | The renderer: taffy flexbox layout → SDF rounded-rect quads (WGSL, `shader.wgsl`), a textured pass for decoded `<img>` files (`image.wgsl`), and glyphon/cosmic-text for text. |
 | root crate `html_rs` | Facade: re-exports everything + `runtime.rs` (winit `ApplicationHandler`, `launch()`) . |
 
 Dependency direction: `macro → (nothing)`, `core → taffy`, `render → core, wgpu, glyphon, taffy`, root → all.

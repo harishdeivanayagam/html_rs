@@ -54,6 +54,7 @@ There is **no webview and no JS engine** anywhere in the stack:
 cargo run --bin 01_hello_world     # static markup + Tailwind
 cargo run --bin 02_counter_app     # state + event handlers
 cargo run --bin 03_todo_app        # controlled <input>, dynamic lists
+cargo run --bin 04_elements        # full element gallery: lists, images, tables, dialog…
 
 # Web (Trunk + wasm32) — same example sources, no code changes
 rustup target add wasm32-unknown-unknown
@@ -81,19 +82,39 @@ layout, paints background/border, and can carry event handlers.
 | `<div>` | ✅ supported | Generic flow container (block-level box). |
 | `<p>` | ✅ supported | Paragraph — block-level text box. |
 | `<button>` | ✅ supported | Interactive box; `cursor-pointer` behavior, `onclick`. |
-| `<input>` | ✅ supported | *Controlled* text field: focus ring on click, typing dispatches `oninput` (full new value), Enter dispatches `onenter`, Backspace editing supported. |
-| `<span>`, `<h1>–<h6>`, `<img>`, … | 🚧 planned | Render as plain boxes today; text sizing via `text-*` classes works on any element. |
+| `<input>` | ✅ supported | Text field (default), `type="search"` pill variant, `type="checkbox"` and `type="radio"` controls (styled box/circle, `checked` attr toggles accent fill); focus ring on click, typing dispatches `oninput` (full new value), Enter dispatches `onenter`, Backspace editing supported. |
+| `<ul>` / `<ol>` / `<li>` | ✅ supported | Bulleted (`•`) and numbered (`1.`, `2.`, …) lists — markers are drawn in the list's left gutter (`pl-6` tag default). |
+| `<img>` | ✅ supported | Decodes local image files (PNG/JPEG/GIF/WebP/BMP) into GPU textures, aspect-preserved fit inside `w-*`/`h-*` classes; remote (`http(s)`) and `data:` URLs are not fetched — on wasm32 nothing is loaded from disk — so those (or unreadable files) render the `alt` text as a placeholder. |
+| `<a>` | ✅ supported | Link-styled text box (`underline`, link color, `cursor-pointer`). `href` is carried as data — no navigation is performed. |
+| `<select>` / `<option>` | ✅ supported | Dropdown-styled box showing the `value` attr (or the first `<option>`'s text) plus a `▾` chevron; options are hidden. Selection UI is app-driven — style it with `onclick` handlers. |
+| `<dialog>` | ✅ supported | Modal box: hidden unless the `open` attribute is present; when open it floats above the flow (absolute, centered via auto margins). |
+| `<table>` / `<thead>` / `<tbody>` / `<tfoot>` / `<tr>` / `<td>` / `<th>` | ✅ supported | Table model on flex primitives: table is a column of rows, `td`/`th` are equal-width cells (`th` bold). |
+| `<blockquote>` | ✅ supported | Quoted text with a left accent bar and muted color. |
+| `<code>` / `<kbd>` | ✅ supported | Monospace-styled inline boxes (`code`: tinted background; `kbd`: bordered keycap). |
+| `<nav>` | ✅ supported | Horizontal navigation row (flex row, centered items). |
+| `<span>`, `<h1>–<h6>`, … | 🚧 planned | Render as plain boxes today; text sizing via `text-*` classes works on any element. |
 
 ### Attributes
 
 | Attribute | Applies to | Notes |
 |---|---|---|
 | `class` / `className` | all | Tailwind class string (compile-time compiled). |
-| `value` | `<input>` | Controlled value; drive it from state. |
+| `value` | `<input>`, `<select>` | Controlled value; drive it from state. For `<select>` it picks the shown option. |
 | `placeholder` | `<input>` | Shown when `value` is empty. |
+| `src` / `alt` | `<img>` | File path to decode + placeholder text when unavailable. |
+| `href` | `<a>` | Carried as data; not navigated. |
+| `type` | `<input>` | `text` (default), `search`, `checkbox`, `radio`. |
+| `checked` | `<input type="checkbox\|radio">` | Checked state (any value ≠ `false` means checked). |
+| `open` | `<dialog>` | Presence makes the dialog visible + centered (any value ≠ `false`). |
+| `selected` | `<option>` | Carried as data (option display is app-driven). |
 | `onclick` | all | `move \|\| ...` or `move \|e: &PointerEvent\| ...` |
 | `oninput` / `onenter` | `<input>` | `\|text: &str\|` — full new value. |
 | `onkeydown` | all | `\|k: &KeyEventInfo\|` with `key`, `ctrl`, `shift`, `alt`, `meta`. |
+
+Several tags ship with browser-style default classes (e.g. `<ul>` gets
+`flex-col gap-1 pl-6`, `<select>` gets a bordered pill, `<code>`/`<kbd>` are
+monospace) — see `tag_default_classes` in `html_rs_core`. Your own classes are
+appended after the defaults, so they win.
 
 ### Text model
 
@@ -209,7 +230,9 @@ web/                     Trunk HTML shells (one per example)
   one and only re-lays-out changed subtrees (`set_style` / `set_node_context`
   for in-place patches, teardown + rebuild for structural changes).
 - **Paint**: one instanced draw call for rounded-rect quads (premultiplied
-  alpha, sRGB→linear) + glyphon text pass. Shaped text buffers are cached per
+  alpha, sRGB→linear), a second textured pass for `<img>` (local files decoded
+  via the `image` crate; remote URLs/wasm fall back to `alt` text), and the
+  glyphon text pass. Shaped text buffers are cached per
   node and reused while content/size/wrap are unchanged; on the GPU, only
   quad instances that actually changed are re-uploaded.
 - **Hit testing**: painter's algorithm — topmost-last wins; click/focus/hover

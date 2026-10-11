@@ -16,6 +16,7 @@ cargo test --workspace               # unit tests (state runtime, tailwind compi
 cargo run --bin 01_hello_world
 cargo run --bin 02_counter_app
 cargo run --bin 03_todo_app
+cargo run --bin 04_elements
 ```
 
 ## Web (Trunk + wasm32)

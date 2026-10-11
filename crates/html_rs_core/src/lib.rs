@@ -12,4 +12,4 @@ pub use element::{
     child_of, click, enter, input, key, text, Child, ClickHandler, Element, EnterHandler,
     InputHandler, KeyHandler, KeyEventInfo, Node, PointerEvent, MouseButton, TextNode,
 };
-pub use style::{parse_classes, Decoration, StyleOut, TextAlign, BASE_FONT_SIZE, DEFAULT_BG, DEFAULT_TEXT};
+pub use style::{parse_classes, tag_default_classes, Decoration, Paint, StyleOut, TextAlign, BASE_FONT_SIZE, DEFAULT_BG, DEFAULT_TEXT};

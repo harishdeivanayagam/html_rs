@@ -475,7 +475,7 @@ mod tests {
         let runs = State::new(0);
         create_effect(move || {
             let v = untrack(|| a.get());
-            runs.update(|r| *r += v as i32 + 1);
+            runs.update(|r| *r += v + 1);
         });
         assert_eq!(runs.get(), 1);
         a.set(10);

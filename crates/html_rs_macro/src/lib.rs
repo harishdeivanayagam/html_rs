@@ -190,17 +190,27 @@ impl Parser {
     fn finish_element(&mut self, tag: &str, attrs: &[(String, String)], children: &str) -> PResult<String> {
         let mut code = String::new();
         let _ = writeln!(code, "{{ let mut __el = ::html_rs::Element::new(\"{tag}\");");
-        for (name, value) in attrs {
-            match name.as_str() {
-                "class" | "className" => {
-                    let _ = writeln!(code, "__el = __el.class({value});");
-                }
-                "value" => {
-                    let _ = writeln!(code, "__el = __el.value({value});");
-                }
-                "placeholder" => {
-                    let _ = writeln!(code, "__el = __el.placeholder({value});");
-                }
+            for (name, value) in attrs {
+                match name.as_str() {
+                    "class" | "className" => {
+                        let _ = writeln!(code, "__el = __el.class({value});");
+                    }
+                    "value" => {
+                        let _ = writeln!(code, "__el = __el.value({value});");
+                    }
+                    "placeholder" => {
+                        let _ = writeln!(code, "__el = __el.placeholder({value});");
+                    }
+                    // Generic passthrough attributes (stored on the element;
+                    // some drive renderer behavior — `src`/`alt` for <img>,
+                    // `type`/`checked` for <input>, `open` for <dialog>, ...).
+                    // `format!` accepts literals, bools and Strings alike.
+                    "src" | "alt" | "href" | "type" | "checked" | "selected" | "open" => {
+                        let _ = writeln!(
+                            code,
+                            "__el = __el.attr(\"{name}\", format!(\"{{}}\", {value}));"
+                        );
+                    }
                 _ => {
                     let Some((_, method, event_ty)) = EVENTS.iter().find(|(n, _, _)| *n == name) else {
                         return Err(format!("unsupported attribute `{name}` in <{tag}>"));

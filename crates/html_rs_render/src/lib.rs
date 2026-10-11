@@ -8,8 +8,9 @@
 
 mod painter;
 
-pub use painter::{paint, DrawList, HitTarget, PaintState, Quad, TextItem};
+pub use painter::{paint, DrawList, HitTarget, ImageItem, ImageSizes, PaintState, Quad, TextItem};
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -22,6 +23,31 @@ const CORNERS: [[f32; 2]; 6] = [
     [1.0, 1.0],
     [0.0, 1.0],
 ];
+
+/// Corner positions + UVs for the image pipeline ([x, y, u, v] per vertex).
+const CORNERS_UV: [[f32; 4]; 6] = [
+    [0.0, 0.0, 0.0, 0.0],
+    [1.0, 0.0, 1.0, 0.0],
+    [0.0, 1.0, 0.0, 1.0],
+    [1.0, 0.0, 1.0, 0.0],
+    [1.0, 1.0, 1.0, 1.0],
+    [0.0, 1.0, 0.0, 1.0],
+];
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct ImageInstanceGpu {
+    pos_size: [f32; 4],
+    params: [f32; 4],
+}
+
+struct LoadedImage {
+    #[allow(dead_code)] // must stay alive: bind group keeps a view, not ownership
+    texture: wgpu::Texture,
+    bind: wgpu::BindGroup,
+    w: f32,
+    h: f32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -42,6 +68,8 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     quad_pipeline: wgpu::RenderPipeline,
     corner_buf: wgpu::Buffer,
+    /// Corner+UV vertices for the image pipeline.
+    corner_uv_buf: wgpu::Buffer,
     instance_buf: wgpu::Buffer,
     instance_capacity: usize,
     /// Last frame's uploaded instances — used to write only changed ranges.
@@ -58,6 +86,15 @@ pub struct Renderer {
     /// Persistent layout + paint state (taffy tree, previous items, shaped
     /// text cache) — enables incremental, surgical re-layout.
     paint_state: painter::PaintState,
+    /// Image pipeline state: decoded textures keyed by `src`.
+    image_pipeline: wgpu::RenderPipeline,
+    image_bind: wgpu::BindGroupLayout,
+    /// Linear filtering sampler shared by all image bind groups.
+    linear_sampler: wgpu::Sampler,
+    image_instance_buf: wgpu::Buffer,
+    image_instance_capacity: usize,
+    image_cache: HashMap<String, Option<LoadedImage>>,
+    image_sizes: ImageSizes,
     /// Window clear color (linear RGBA).
     pub clear: [f32; 4],
     width: f32,
@@ -233,6 +270,111 @@ impl Renderer {
         );
         let viewport = glyphon::Viewport::new(&device, &cache);
 
+        // --- Image pipeline -------------------------------------------------
+        let image_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("html.rs image bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let image_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("html.rs image layout"),
+            bind_group_layouts: &[Some(&camera_bgl), Some(&image_bgl)],
+            immediate_size: 0,
+        });
+        let image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("html.rs image shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("image.wgsl").into()),
+        });
+        let image_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("html.rs image pipeline"),
+            layout: Some(&image_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &image_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[
+                    Some(wgpu::VertexBufferLayout {
+                        array_stride: 16,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute { shader_location: 0, format: wgpu::VertexFormat::Float32x2, offset: 0 },
+                            wgpu::VertexAttribute { shader_location: 1, format: wgpu::VertexFormat::Float32x2, offset: 8 },
+                        ],
+                    }),                    Some(wgpu::VertexBufferLayout {
+                        array_stride: 32,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &[
+                            wgpu::VertexAttribute { shader_location: 2, format: wgpu::VertexFormat::Float32x4, offset: 0 },
+                            wgpu::VertexAttribute { shader_location: 3, format: wgpu::VertexFormat::Float32x4, offset: 16 },
+                        ],
+                    }),
+                ],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &image_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let corner_uv_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("html.rs image corners"),
+            contents: bytemuck::cast_slice(&CORNERS_UV),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let image_instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("html.rs image instances"),
+            size: 32 * 64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("html.rs image sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
         Self {
             device,
             queue,
@@ -240,6 +382,7 @@ impl Renderer {
             config,
             quad_pipeline,
             corner_buf,
+            corner_uv_buf,
             instance_buf,
             instance_capacity: 256,
             prev_instances: Vec::new(),
@@ -252,6 +395,13 @@ impl Renderer {
             text_renderer,
             viewport,
             paint_state: painter::PaintState::new(),
+            image_pipeline,
+            image_bind: image_bgl,
+            linear_sampler,
+            image_instance_buf,
+            image_instance_capacity: 64,
+            image_cache: HashMap::new(),
+            image_sizes: HashMap::new(),
             clear: html_rs_core::DEFAULT_BG,
             width: size.width as f32,
             height: size.height as f32,
@@ -284,6 +434,7 @@ impl Renderer {
         focus_path: Option<&[u32]>,
         hovered_path: Option<&[u32]>,
     ) -> DrawList {
+        self.collect_images(root);
         painter::paint(
             &mut self.paint_state,
             root,
@@ -291,9 +442,111 @@ impl Renderer {
             height.max(1.0),
             scale,
             &mut self.font_system,
+            &self.image_sizes,
             focus_path,
             hovered_path,
         )
+    }
+
+    /// Walks the tree, decoding any newly seen `<img src>` files and filling
+    /// `image_sizes` with their intrinsic dimensions (used for measurement).
+    fn collect_images(&mut self, root: &html_rs_core::Element) {
+        fn walk(el: &html_rs_core::Element, r: &mut Renderer) {
+            if el.tag == "img" {
+                let src = el.get_attr("src").unwrap_or_default().to_string();
+                if !src.is_empty() && !r.image_cache.contains_key(&src) {
+                    r.image_cache.insert(src.clone(), None);
+                    if let Some(img) = r.load_image(&src) {
+                        r.image_sizes.insert(src.clone(), Some((img.w, img.h)));
+                        r.image_cache.insert(src, Some(img));
+                    }
+                }
+            }
+            for child in &el.children {
+                if let html_rs_core::Node::Element(e) = child {
+                    walk(e, r);
+                }
+            }
+        }
+        walk(root, self);
+    }
+
+    /// Decodes an image file from disk into a GPU texture. Returns `None` for
+    /// remote/data URLs, on wasm32 (no filesystem access), or if the file
+    /// cannot be read/decoded.
+    fn load_image(&self, src: &str) -> Option<LoadedImage> {
+        if src.starts_with("http://")
+            || src.starts_with("https://")
+            || src.starts_with("data:")
+        {
+            return None;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = src;
+            return None;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = std::fs::read(src).ok()?;
+            let img = image::load_from_memory(&bytes).ok()?;
+            let (iw, ih) = (img.width(), img.height());
+            if iw == 0 || ih == 0 {
+                return None;
+            }
+            let rgba = img.to_rgba8();
+            let size = wgpu::Extent3d {
+                width: iw,
+                height: ih,
+                depth_or_array_layers: 1,
+            };
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("html.rs image"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &rgba,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * iw),
+                    rows_per_image: None,
+                },
+                size,
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("html.rs image bind"),
+                layout: &self.image_bind,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                ],
+            });
+            Some(LoadedImage {
+                texture,
+                bind,
+                w: iw as f32,
+                h: ih as f32,
+            })
+        }
     }
 
     /// Renders a draw list to the screen.
@@ -441,6 +694,45 @@ impl Renderer {
                 pass.set_vertex_buffer(0, self.corner_buf.slice(..));
                 pass.set_vertex_buffer(1, self.instance_buf.slice(..));
                 pass.draw(0..6, 0..quad_count as u32);
+            }
+            // Images (between quads and text).
+            if !list.images.is_empty() {
+                // Grow the instance scratch buffer if needed.
+                if list.images.len() > self.image_instance_capacity {
+                    self.image_instance_buf.destroy();
+                    self.image_instance_capacity = list.images.len().next_power_of_two();
+                    self.image_instance_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("html.rs image instances"),
+                        size: (self.image_instance_capacity * 32) as u64,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                }
+                for (i, img) in list.images.iter().enumerate() {
+                    let inst = ImageInstanceGpu {
+                        pos_size: [img.rect[0], img.rect[1], img.rect[2], img.rect[3]],
+                        params: [img.radius, 0.0, 0.0, 0.0],
+                    };
+                    self.queue.write_buffer(
+                        &self.image_instance_buf,
+                        (i * 32) as u64,
+                        bytemuck::bytes_of(&inst),
+                    );
+                }
+                pass.set_pipeline(&self.image_pipeline);
+                pass.set_bind_group(0, &self.camera_bind, &[]);
+                pass.set_vertex_buffer(0, self.corner_uv_buf.slice(..));
+                pass.set_vertex_buffer(1, self.image_instance_buf.slice(..));
+                for (i, img) in list.images.iter().enumerate() {
+                    if let Some(Some(loaded)) = self.image_cache.get(&img.src) {
+                        pass.set_bind_group(1, &loaded.bind, &[]);
+                        pass.set_vertex_buffer(
+                            1,
+                            self.image_instance_buf.slice((i * 32) as u64..((i + 1) * 32) as u64),
+                        );
+                        pass.draw(0..6, 0..1);
+                    }
+                }
             }
             if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
                 eprintln!("html.rs: text render failed: {e:?}");

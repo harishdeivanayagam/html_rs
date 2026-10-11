@@ -79,6 +79,8 @@ pub struct StyleOut {
     pub text_align: Option<TextAlign>,
     /// Shows a pointer cursor on hover.
     pub cursor_pointer: bool,
+    /// Renders text in a monospace font (`font-mono`, `<kbd>`, `<code>`).
+    pub mono: bool,
     /// Classes prefixed `hover:` — applied while the element is hovered.
     pub hover: Vec<String>,
 }
@@ -98,6 +100,7 @@ impl StyleOut {
             opacity: None,
             text_align: None,
             cursor_pointer: false,
+            mono: false,
             hover: Vec::new(),
         }
     }
@@ -122,17 +125,17 @@ impl StyleOut {
             if hov.color.is_some() {
                 p.color = hov.color;
             }
-            if hov.radius.is_some() {
-                p.radius = hov.radius.unwrap();
+            if let Some(r) = hov.radius {
+                p.radius = r;
             }
-            if hov.border_width.is_some() {
-                p.border_width = hov.border_width.unwrap();
+            if let Some(bw) = hov.border_width {
+                p.border_width = bw;
             }
             if hov.border_color.is_some() {
                 p.border_color = hov.border_color;
             }
-            if hov.opacity.is_some() {
-                p.opacity = hov.opacity.unwrap();
+            if let Some(o) = hov.opacity {
+                p.opacity = o;
             }
         }
         p
@@ -175,6 +178,51 @@ pub fn parse_classes(classes: &[String], scale: f32) -> StyleOut {
         }
     }
     out
+}
+
+/// Browser-style default classes for semantic tags, applied **before** the
+/// element's own classes (user classes win — later assignments overwrite).
+///
+/// These give the semantic tags their expected look with zero user styling:
+/// lists stack vertically, links underline, `<kbd>`/`<code>` go monospace,
+/// table rows/cells line up, `<select>` looks like a control, etc.
+pub fn tag_default_classes(tag: &str) -> &'static [&'static str] {
+    match tag {
+        // Lists: vertical stack with left padding for the bullet gutter.
+        "ul" | "ol" => &["flex-col", "gap-1", "pl-6", "my-2", "w-full"],
+        // Links: classic link look + pointer cursor. (`href` is accepted but
+        // not navigated — there is no web layer.)
+        "a" => &["underline", "text-blue-400", "cursor-pointer"],
+        // Images: placeholder look until (or instead of) a decoded texture.
+        "img" => &["bg-slate-800", "rounded-lg", "shrink-0"],
+        // Select: control-like chrome; the painter overlays the selected
+        // option's text and a chevron. `option` children are hidden.
+        "select" => &[
+            "flex", "items-center", "border", "border-slate-700", "rounded-xl",
+            "bg-slate-800", "px-4", "py-3", "cursor-pointer", "shrink-0",
+        ],
+        // Dialog: floating panel. Centered by the painter via absolute
+        // positioning + auto margins; hidden unless the `open` attr is set.
+        "dialog" => &[
+            "flex-col", "gap-4", "bg-slate-800", "border", "border-slate-700",
+            "rounded-2xl", "p-8",
+        ],
+        // Table: rows stack, cells flex equally so columns line up.
+        "table" => &["flex-col", "w-full"],
+        "thead" | "tbody" | "tfoot" => &["flex-col", "w-full"],
+        "tr" => &["flex-row", "w-full"],
+        "td" => &["flex-1", "px-3", "py-2"],
+        "th" => &["flex-1", "px-3", "py-2", "font-bold", "text-left"],
+        // Semantic text blocks.
+        "blockquote" => &["pl-4", "my-2", "text-slate-400"],
+        "nav" => &["flex-row", "items-center", "gap-4", "w-full"],
+        "kbd" => &[
+            "font-mono", "border", "border-slate-600", "rounded-md",
+            "px-2", "py-0.5", "bg-slate-900", "text-sm",
+        ],
+        "code" => &["font-mono", "bg-slate-800", "rounded-md", "px-1.5", "py-0.5"],
+        _ => &[],
+    }
 }
 
 fn px(n: f32, scale: f32) -> LengthPercentage {
@@ -233,6 +281,7 @@ fn apply(out: &mut StyleOut, class: &str, scale: f32) {
         "text-left" => out.text_align = Some(TextAlign::Left),
         "text-center" => out.text_align = Some(TextAlign::Center),
         "text-right" => out.text_align = Some(TextAlign::Right),
+        "font-mono" => out.mono = true,
         "border" => out.border_width = Some(1.0 * scale),
         "font-thin" => out.font_weight = Some(100),
         "font-extralight" => out.font_weight = Some(200),
@@ -290,7 +339,7 @@ fn apply(out: &mut StyleOut, class: &str, scale: f32) {
     if let Some(rest) = class.strip_prefix("auto-rows-") {
         if let Some(len) = parse_len(rest, scale) {
             // Implicit rows of fixed height.
-            out.taffy.grid_auto_rows = vec![TrackSizingFunction::from(len)].into();
+            out.taffy.grid_auto_rows = vec![TrackSizingFunction::from(len)];
             return;
         }
     }
@@ -443,7 +492,6 @@ fn apply(out: &mut StyleOut, class: &str, scale: f32) {
     if let Some(rest) = class.strip_prefix("opacity-") {
         if let Some(n) = parse_num(rest) {
             out.opacity = Some((n / 100.0).clamp(0.0, 1.0));
-            return;
         }
     }
 }
