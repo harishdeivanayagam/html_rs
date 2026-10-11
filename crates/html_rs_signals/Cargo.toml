@@ -1,0 +1,7 @@
+[package]
+name = "html_rs_signals"
+version = "0.1.0"
+edition = "2021"
+description = "Fine-grained reactive signals (SolidJS-style) for html.rs"
+
+[dependencies]

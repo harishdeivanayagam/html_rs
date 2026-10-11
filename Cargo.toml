@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/html_rs_signals",
+    "crates/html_rs_core",
+    "crates/html_rs_macro",
+    "crates/html_rs_render",
+]
+
+[package]
+name = "html_rs"
+version = "0.1.0"
+edition = "2021"
+description = "Native cross-platform desktop apps with winit + wgpu, written in HTML-like JSX with Tailwind classes and signals-based reactivity. No webview, no JS."
+license = "MIT"
+# Examples live in `examples/` but are registered as *bins* (see [[bin]]
+# below) so the same files build for desktop (`cargo run --bin ...`) and
+# for web via Trunk (`trunk serve web/...`). This avoids the duplicate
+# build-target warnings cargo would otherwise emit.
+autoexamples = false
+
+[lib]
+name = "html_rs"
+path = "src/lib.rs"
+
+# Examples live in `examples/`, registered as bins so Trunk can build them
+# for wasm32:  trunk serve web/02_counter_app.html
+[[bin]]
+name = "01_hello_world"
+path = "examples/01_hello_world.rs"
+[[bin]]
+name = "02_counter_app"
+path = "examples/02_counter_app.rs"
+[[bin]]
+name = "03_todo_app"
+path = "examples/03_todo_app.rs"
+
+[dependencies]
+html_rs_signals = { path = "crates/html_rs_signals" }
+html_rs_core = { path = "crates/html_rs_core" }
+html_rs_macro = { path = "crates/html_rs_macro" }
+html_rs_render = { path = "crates/html_rs_render" }
+winit = "0.30"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement"] }
+
+[profile.dev.package.wgpu-core]
+opt-level = 1
+[profile.dev.package.wgpu-types]
+opt-level = 1

@@ -1,0 +1,13 @@
+[package]
+name = "html_rs_render"
+version = "0.1.0"
+edition = "2021"
+description = "Custom wgpu renderer for html.rs: SDF rounded-rect quads + glyphon text, laid out with taffy"
+
+[dependencies]
+wgpu = "30"
+glyphon = "0.12"
+taffy = "0.14"
+bytemuck = { version = "1", features = ["derive"] }
+winit = "0.30"
+html_rs_core = { path = "../html_rs_core" }

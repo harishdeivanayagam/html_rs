@@ -1,0 +1,54 @@
+---
+description: html.rs framework overview — architecture, crate map, and the render pipeline. Read this first when working in this repo.
+globs:
+alwaysApply: true
+---
+
+# html.rs — native HTML for the desktop
+
+A Rust framework for native cross-platform desktop apps (macOS/Windows/Linux) **and web**,
+built directly on `winit` + `wgpu`. **No webview, no Wry/CEF, no JS engine** — the `ui!`
+macro compiles HTML-like markup into an element tree that a custom wgpu renderer paints.
+Reactivity is signals-based (like SolidJS / Svelte 5), not VDOM-diffing.
+
+## Crate map
+
+| Crate | Role |
+|---|---|
+| `crates/html_rs_signals` | Fine-grained reactive signals (`Signal<T>` is `Copy`), effects, memos, `batch`, `untrack`. Thread-local runtime, single-threaded by design. |
+| `crates/html_rs_core` | `Element`/`Node`/`TextNode` tree, event types (`PointerEvent`, `KeyEventInfo`, handler constructors `click`/`input`/`enter`/`key`), and the **Tailwind class compiler** (`style.rs` → taffy `Style` + paint props; `colors.rs` → Tailwind palette). |
+| `crates/html_rs_macro` | The `ui!` proc macro: hand-rolled HTML parser over `proc_macro::TokenTree` (no syn/quote). |
+| `crates/html_rs_render` | The renderer: taffy flexbox layout → SDF rounded-rect quads (WGSL, `shader.wgsl`) + glyphon/cosmic-text for text. |
+| root crate `html_rs` | Facade: re-exports everything + `runtime.rs` (winit `ApplicationHandler`, `launch()`) . |
+
+Dependency direction: `macro → (nothing)`, `core → taffy`, `render → core, wgpu, glyphon, taffy`, root → all.
+
+## Render pipeline (every repaint)
+
+1. A signal write flushes queued effects → the single **render effect** in `runtime.rs`
+   re-invokes the user's view closure → new `Element` tree stored in `Shared.tree`.
+2. `RedrawRequested` → `Renderer::paint`:
+   - build a `TaffyTree<TextSpec>`; text leaves are measured by cosmic-text shaping
+     (`LayoutInput.known_dimensions.width` constrains wrapping),
+   - `compute_layout_with_measure` runs flexbox,
+   - walk the flat item list (preorder) emitting `Quad`s, shaped `TextItem`s and
+     `HitTarget`s (hit testing is "topmost last wins", z-order = tree order).
+3. `Renderer::render`: upload quad instances → glyphon `prepare` text → one render pass
+   (clear → instanced quads → text) → present.
+
+## Coordinate spaces (important)
+
+- Layout/paint/hit-testing run in **physical pixels** (class px values are multiplied by
+  the window `scale_factor` at parse time).
+- `PointerEvent` coordinates passed to handlers are **logical** CSS pixels.
+- Colors in `html_rs_core` are **sRGB floats**; the GPU expects **linear** (targets are
+  `*UnormSrgb`) — always convert with `srgb_to_linear` when building quads.
+
+## Conventions
+
+- All framework types are re-exported from the root crate: `html_rs::{ui, launch, Signal, Element, ...}`.
+  The macro generates `::html_rs::...` paths, so keep those re-exports intact.
+- Unknown Tailwind classes are silently ignored; known ones live in `core/src/style.rs`.
+- Examples live in `examples/*.rs` and are registered as `[[bin]]` targets
+  (`autoexamples = false` — bins are what Trunk builds for wasm). Run them with
+  `cargo run --bin 01_hello_world`.

@@ -1,0 +1,10 @@
+[package]
+name = "html_rs_macro"
+version = "0.1.0"
+edition = "2021"
+description = "The ui! macro: HTML-like declarative syntax for html.rs"
+
+[lib]
+proc-macro = true
+
+[dependencies]

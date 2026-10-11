@@ -1,0 +1,8 @@
+[package]
+name = "html_rs_core"
+version = "0.1.0"
+edition = "2021"
+description = "Element tree, event types and the Tailwind-class style compiler for html.rs"
+
+[dependencies]
+taffy = "0.14"

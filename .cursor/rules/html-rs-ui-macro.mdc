@@ -1,0 +1,73 @@
+---
+description: Syntax reference for the ui! macro — tags, attributes, event handlers, text interpolation, and the supported Tailwind subset.
+globs: ["examples/**", "src/**", "crates/**"]
+alwaysApply: false
+---
+
+# The `ui!` macro
+
+`ui! { ... }` parses HTML-like markup and emits `html_rs::Element` builder calls.
+The macro must be called as `html_rs::ui` (it generates `::html_rs::...` paths).
+
+## Syntax
+
+```rust
+ui! {
+    <div class="flex flex-col items-center gap-4 p-8 bg-slate-800 rounded-xl">
+        <p class="text-2xl font-bold text-white">"Counter: "{count.get()}</p>
+        <button class="px-4 py-2 bg-blue-600 rounded-lg cursor-pointer"
+                onclick={move || count.update(|c| *c += 1)}>
+            "Count (+)"
+        </button>
+    </div>
+}
+```
+
+Rules:
+
+- **Tags**: `<tag>...</tag>`, self-closing `<input ... />`. Root must be a single element.
+- **Classes**: `class="..."` (also accepts `className`). Dynamic classes: `class={some_string}`.
+- **Text**: prefer **string literals**: `"Counter: "`. Raw unquoted text is parsed
+  token-by-token with approximate spacing (only use for single words).
+- **Interpolation**: `{expr}` inside a text run → `format!` text node:
+  `"Counter: "{count.get()}`. A `{expr}` as a whole child is rendered via the
+  `Child` trait: any `Display` type → text; `Element` or `Vec<Element>` → element children
+  (this is how dynamic lists are spliced in).
+- **Events**: `onclick={move || ...}` (no arg) or `onclick={move |e| ...}` where `e: &PointerEvent`.
+  Also: `oninput={|text: &str| ...}`, `onenter={|text: &str| ...}` (fires on Enter key in an `<input>`),
+  `onkeydown={|k| ...}` (`k: &KeyEventInfo`, fields: `key`, `ctrl`, `shift`, `alt`, `meta`).
+- **Attributes**: `value={expr}` / `value="..."` and `placeholder="..."` (used by `<input>`).
+  Anything else is rejected at compile time (no silent attrs).
+
+## Elements with behavior
+
+- `<input>`: gets focus on click (blue focus ring), typing dispatches `oninput` with the
+  **full new value**, Enter dispatches `onenter` with the current value. It is a
+  *controlled* input: render its value with `value={signal.get()}` and set the signal in
+  `oninput`, or the text won't change.
+- `<button>` and everything else: opaque boxes (flex containers) unless given classes.
+
+## Supported Tailwind subset (crates/html_rs_core/src/style.rs)
+
+- Layout (flexbox): `flex`, `flex-row`, `flex-col`, `flex-1`, `flex-grow`, `shrink-0`, `block`,
+  `items-{start,center,end,stretch}`, `justify-{start,center,end,between,around,evenly}`,
+  `gap-N`, `gap-x-N`, `gap-y-N`, `w-N|w-full|w-auto|w-px`, `h-*` likewise, `min-w-0`, `min-h-0`,
+  `p|px|py|pt|pb|pl|pr-N`, `m...-N` + `m-auto`, `overflow-hidden`.
+- Layout (CSS Grid): `grid`, `grid-cols-N`, `grid-rows-N` (`repeat(N, minmax(0, 1fr))`),
+  `col-span-N`, `row-span-N`, `col-start-N`, `row-start-N`, `grid-flow-{row,col,row-dense,col-dense}`,
+  `auto-rows-N`; `gap-*` and `items-*`/`justify-*` apply to grid containers too.
+- Visual: `bg-{color}`, `border` / `border-N` / `border-{color}`,
+  `rounded` `-sm` `-md` `-lg` `-xl` `-2xl` `-3xl` `-full` `-N`, `opacity-N` (percent).
+- Text: `text-{color}`, `text-{xs,sm,base,lg,xl,2xl..7xl}`, `font-{thin..black}`,
+  `text-{left,center,right}`, `underline`, `line-through`.
+- Interaction: `cursor-pointer`, and **`hover:` prefixed variants** (`hover:bg-blue-500`)
+  are supported and applied while the pointer is over the element.
+- Colors: the full Tailwind v3 palette for slate, gray, zinc, neutral, stone, red, orange,
+  amber, yellow, lime, green, emerald, teal, cyan, sky, blue, indigo, violet, purple,
+  fuchsia, pink, rose + `white`, `black`, `transparent`, and `bg-[#0ea5e9]` hex literals.
+  Opacity modifiers (`bg-blue-500/50`) are NOT supported.
+- Spacing scale: Tailwind's `1` = 4 CSS px (0.25rem). Unscaled numbers (text sizes, radii)
+  are their own px values. Everything is multiplied by the window scale factor internally.
+
+When extending the class compiler: add a match arm (or prefix-strip branch) in
+`apply()` in `crates/html_rs_core/src/style.rs` and a unit test next to the existing ones.

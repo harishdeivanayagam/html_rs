@@ -1,0 +1,62 @@
+---
+description: Build, run and web (Trunk/wasm) workflows for html.rs, plus framework extension points.
+globs:
+alwaysApply: false
+---
+
+# Workflows
+
+## Commands
+
+```sh
+cargo build                          # whole workspace
+cargo test --workspace               # unit tests (signals, tailwind compiler)
+
+# Native desktop windows (examples are registered as bins):
+cargo run --bin 01_hello_world
+cargo run --bin 02_counter_app
+cargo run --bin 03_todo_app
+```
+
+## Web (Trunk + wasm32)
+
+Examples are registered as `[[bin]]` targets precisely so Trunk can build them —
+no extra glue is needed; `launch()` handles the web event loop and canvas setup.
+Each example has its own HTML shell in `web/` that selects the bin via `data-bin`.
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install trunk --locked
+trunk serve web/02_counter_app.html   # default target, serves on :8080
+trunk serve web/01_hello_world.html
+trunk serve web/03_todo_app.html
+trunk build --release web/03_todo_app.html   # output in dist/
+```
+
+The default target in `Trunk.toml` is `web/02_counter_app.html`. The `web/*.html`
+shells load the Rust bin with `<link data-trunk data-type="rust" data-bin="..."/>`;
+add a new shell file per new example bin.
+
+## Gotchas
+
+- First native build of `wgpu` is slow; `wgpu-core`/`wgpu-types` have opt-level 1 in dev.
+- On macOS the app must run from the main thread (winit requirement) — the runtime does
+  this; don't spawn winit windows on background threads.
+- If a window opens blank: the render effect only repaints on `RedrawRequested`; check
+  that signal writes happened (no signals = paint-once) and that `Renderer` was created
+  (on wasm it's async — `ready` is set after `spawn_local` completes).
+- winit 0.30 delivers keyboard modifiers via a separate `ModifiersChanged` event; the
+  runtime caches them in `Shared.modifiers` — don't read them off `KeyEvent`.
+
+## Extending the framework
+
+- **New Tailwind class** → `crates/html_rs_core/src/style.rs` (`apply`) + test.
+- **New color** → `crates/html_rs_core/src/colors.rs` (palette macro; shades ordered
+  50→950).
+- **New element behavior** (e.g. checkbox, scroll) → hit targets/paint logic in
+  `crates/html_rs_render/src/painter.rs`; dispatch in `src/runtime.rs`.
+- **New event attribute** in `ui!` → add to `EVENTS` table in
+  `crates/html_rs_macro/src/lib.rs` + a constructor fn in `crates/html_rs_core/src/element.rs`
+  (`click`, `input`, `enter`, `key` are the existing ones).
+- **New GPU feature** (shadows, gradients, images) → new pipeline in
+  `crates/html_rs_render/src/lib.rs`; quads are premultiplied-alpha, sRGB→linear converted.
