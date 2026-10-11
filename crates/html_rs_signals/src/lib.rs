@@ -1,6 +1,7 @@
 //! # html_rs_signals
 //!
-//! Fine-grained reactive **signals** — the same mental model as SolidJS / Svelte 5 runes,
+//! Fine-grained reactive **signals** — the same mental model as modern JS
+//! frameworks' signals,
 //! but in Rust and single-threaded (UI state never crosses threads).
 //!
 //! ```ignore
@@ -15,7 +16,7 @@
 //! ```
 //!
 //! Key properties:
-//! - `Signal<T>` is [`Copy`] — clone it into closures freely, exactly like Solid's signals.
+//! - `Signal<T>` is [`Copy`] — clone it into closures freely, exactly like JS-framework signals.
 //! - Reads inside [`create_effect`] / [`create_memo`] are tracked automatically.
 //! - Writes batch automatically: an effect re-runs at most once per "flush".
 //! - [`batch`] groups many writes into a single flush; [`untrack`] reads without subscribing.
@@ -248,7 +249,7 @@ fn queue_effect(id: u64) {
             rt.pending.push(id);
         }
         // Outside of a batch, effects flush synchronously after the write —
-        // like Solid's microtask, but immediate. Inside a batch we stay
+        // like a JS framework's microtask flush, but immediate. Inside a batch we stay
         // queued until `batch` finishes and calls `drain_effects`.
         if rt.batch_depth == 0 && !rt.flushing {
             rt.flushing = true;

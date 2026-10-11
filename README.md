@@ -37,7 +37,7 @@ fn main() {
 There is **no webview and no JS engine** anywhere in the stack:
 
 - The `ui!` macro compiles your markup into an `Element` tree at compile time.
-- Signals-based reactivity (à la **SolidJS** / **Svelte 5**) re-runs your view
+- Signals-based reactivity (like modern **JS frameworks**) re-runs your view
   closure when signals change — fine-grained, no VDOM diffing.
 - Layout runs through **taffy** (the same flexbox/grid engine used by Dioxus,
   Bevy UI and others).
@@ -171,7 +171,9 @@ the Tailwind ecosystem stay copy-pasteable.
 
 ## Reactivity: signals, not a VDOM
 
-Reactivity follows the **SolidJS / Svelte 5 runes** model:
+Reactivity follows the **fine-grained signals model popularized by modern JS
+frameworks** — reactive state that tracks its readers, and re-runs only the
+code that depends on it:
 
 ```rust
 let count = Signal::new(0i32);          // Signal<T> is Copy — capture freely
