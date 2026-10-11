@@ -31,7 +31,7 @@ fn main() {
                             onclick={move || count.set(0)}
                         >"Reset"</button>
                     </div>
-                    <p class="text-slate-500 text-sm">"state lives in a `State` — no re-render loop, no diffing"</p>
+                    <p class="text-slate-500 text-sm">"state lives in a `State` — writes re-run the view effect; no VDOM, no DOM patching"</p>
                 </div>
             </div>
         }

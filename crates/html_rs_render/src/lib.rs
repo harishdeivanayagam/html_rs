@@ -8,7 +8,7 @@
 
 mod painter;
 
-pub use painter::{paint, DrawList, HitTarget, ImageItem, ImageSizes, PaintState, Quad, TextItem};
+pub use painter::{paint, range_value_at, DrawList, HitTarget, ImageItem, ImageSizes, InputState, PaintState, Quad, Scrollable, SelectState, TextItem};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -88,13 +88,19 @@ pub struct Renderer {
     paint_state: painter::PaintState,
     /// Image pipeline state: decoded textures keyed by `src`.
     image_pipeline: wgpu::RenderPipeline,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))] // no filesystem → no textures on web
     image_bind: wgpu::BindGroupLayout,
     /// Linear filtering sampler shared by all image bind groups.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     linear_sampler: wgpu::Sampler,
     image_instance_buf: wgpu::Buffer,
     image_instance_capacity: usize,
     image_cache: HashMap<String, Option<LoadedImage>>,
     image_sizes: ImageSizes,
+    /// Runtime-managed `<select>` state (open menu + internal selections).
+    selects: painter::SelectState,
+    /// Runtime-managed `<input>`/`<textarea>` state (uncontrolled typed values).
+    inputs: painter::InputState,
     /// Window clear color (linear RGBA).
     pub clear: [f32; 4],
     width: f32,
@@ -402,7 +408,9 @@ impl Renderer {
             image_instance_capacity: 64,
             image_cache: HashMap::new(),
             image_sizes: HashMap::new(),
-            clear: html_rs_core::DEFAULT_BG,
+            selects: painter::SelectState::default(),
+            inputs: painter::InputState::default(),
+            clear: html_rs_core::srgb_to_linear(html_rs_core::current_theme().background),
             width: size.width as f32,
             height: size.height as f32,
         }
@@ -443,9 +451,39 @@ impl Renderer {
             scale,
             &mut self.font_system,
             &self.image_sizes,
+            &mut self.selects,
+            &mut self.inputs,
             focus_path,
             hovered_path,
         )
+    }
+
+    /// Mutable access to the runtime-managed `<select>` state (open menu +
+    /// internal selections). The runtime updates this on clicks.
+    pub fn selects_mut(&mut self) -> &mut painter::SelectState {
+        &mut self.selects
+    }
+
+    /// Mutable access to the runtime-managed `<input>`/`<textarea>` state
+    /// (uncontrolled typed values). The runtime updates this on key events.
+    pub fn inputs_mut(&mut self) -> &mut painter::InputState {
+        &mut self.inputs
+    }
+
+    /// Read-only access to the input state.
+    pub fn inputs(&self) -> &painter::InputState {
+        &self.inputs
+    }
+
+    /// Read-only access to the select state (open menu, selections).
+    pub fn selects(&self) -> &painter::SelectState {
+        &self.selects
+    }
+
+    /// Scrolls the container at `path` by `dy` physical px (positive =
+    /// content moves up, like a wheel-down). Clamped at the next paint.
+    pub fn scroll_by(&mut self, path: &[u32], dy: f32) {
+        self.paint_state.scroll_by(path, dy);
     }
 
     /// Walks the tree, decoding any newly seen `<img src>` files and filling
@@ -484,7 +522,7 @@ impl Renderer {
         #[cfg(target_arch = "wasm32")]
         {
             let _ = src;
-            return None;
+            None
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -556,10 +594,13 @@ impl Renderer {
         self.queue
             .write_buffer(&self.camera_buf, 0, bytemuck::cast_slice(&camera));
 
-        // Upload quads (grow buffer if needed).
+        // Upload quads (grow buffer if needed). Top-layer quads are appended
+        // after the base ones so a single instance buffer serves both passes.
+        let quad_split = list.quads.len();
         let quads: Vec<QuadGpu> = list
             .quads
             .iter()
+            .chain(list.top_quads.iter())
             .map(|q| QuadGpu {
                 pos_size: [q.x, q.y, q.w, q.h],
                 color: q.color,
@@ -645,7 +686,11 @@ impl Renderer {
             eprintln!("html.rs: text prepare failed: {e:?}");
         }
 
-        // Draw.
+        // Draw — two passes: base layer (quads → images → text), then the
+        // topmost layer (dialog panels / select menus). Two *submitted*
+        // command buffers are required because glyphon's `prepare` rewrites
+        // the shared vertex buffer — the top pass must be enqueued only after
+        // the base pass has been submitted.
         use wgpu::CurrentSurfaceTexture;
         let frame = match self.surface.get_current_texture() {
             CurrentSurfaceTexture::Success(frame) | CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -668,7 +713,7 @@ impl Renderer {
             });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("html.rs pass"),
+                label: Some("html.rs pass (base)"),
                 multiview_mask: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -688,12 +733,12 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            if quad_count > 0 {
+            if quad_split > 0 {
                 pass.set_pipeline(&self.quad_pipeline);
                 pass.set_bind_group(0, &self.camera_bind, &[]);
                 pass.set_vertex_buffer(0, self.corner_buf.slice(..));
                 pass.set_vertex_buffer(1, self.instance_buf.slice(..));
-                pass.draw(0..6, 0..quad_count as u32);
+                pass.draw(0..6, 0..quad_split as u32);
             }
             // Images (between quads and text).
             if !list.images.is_empty() {
@@ -739,6 +784,89 @@ impl Renderer {
             }
         }
         self.queue.submit(Some(encoder.finish()));
+
+        // Topmost layer: modal dialogs and open select menus. Never drawn
+        // unless something is on it (zero cost otherwise).
+        let has_top = !list.top_quads.is_empty() || !list.top_texts.is_empty();
+        if has_top {
+            // Only call render() if top text was prepared — otherwise it
+            // would re-draw the *base* layer's text (still queued).
+            let mut drew_text = false;
+            if !list.top_texts.is_empty() {
+                let areas: Vec<glyphon::TextArea> = list
+                    .top_texts
+                    .iter()
+                    .map(|t| {
+                        let color = t.color;
+                        let a = (color[3] * 255.0) as u8;
+                        glyphon::TextArea {
+                            buffer: &t.buffer,
+                            left: t.x,
+                            top: t.y,
+                            scale: 1.0,
+                            bounds: glyphon::TextBounds {
+                                left: t.bounds[0].floor() as i32,
+                                top: t.bounds[1].floor() as i32,
+                                right: (t.bounds[0] + t.bounds[2]).ceil() as i32,
+                                bottom: (t.bounds[1] + t.bounds[3]).ceil() as i32,
+                            },
+                            default_color: glyphon::Color::rgba(
+                                (color[0] * 255.0) as u8,
+                                (color[1] * 255.0) as u8,
+                                (color[2] * 255.0) as u8,
+                                a,
+                            ),
+                            custom_glyphs: &[],
+                        }
+                    })
+                    .collect();
+                if let Err(e) = self.text_renderer.prepare(
+                    &self.device,
+                    &self.queue,
+                    &mut self.font_system,
+                    &mut self.atlas,
+                    &self.viewport,
+                    areas,
+                    &mut self.swash_cache,
+                ) {
+                    eprintln!("html.rs: text prepare failed: {e:?}");
+                }
+                drew_text = true;
+            }
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("html.rs frame (top)"),
+                });
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("html.rs pass (top)"),
+                    multiview_mask: None,
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                if quad_count > quad_split {
+                    pass.set_pipeline(&self.quad_pipeline);
+                    pass.set_bind_group(0, &self.camera_bind, &[]);
+                    pass.set_vertex_buffer(0, self.corner_buf.slice(..));
+                    pass.set_vertex_buffer(1, self.instance_buf.slice(..));
+                    pass.draw(0..6, quad_split as u32..quad_count as u32);
+                }
+                if drew_text {
+                    if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
+                        eprintln!("html.rs: text render failed: {e:?}");
+                    }
+                }
+            }
+            self.queue.submit(Some(encoder.finish()));
+        }
         self.queue.present(frame);
     }
 }

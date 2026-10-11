@@ -404,8 +404,7 @@ pub fn batch<R>(f: impl FnOnce() -> R) -> R {
 }
 
 /// Runs `f` with dependency tracking disabled.
-pub fn untrack<R>(f: impl FnOnce() -> R) -> R {
-    RUNTIME.with(|rt| {
+pub fn untrack<R>(f: impl FnOnce() -> R) -> R {    RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
         rt.running.push(Running { id: 0, deps: Vec::new() });
     });
@@ -414,6 +413,113 @@ pub fn untrack<R>(f: impl FnOnce() -> R) -> R {
         rt.borrow_mut().running.pop();
     });
     out
+}
+
+// ---------------------------------------------------------------------------
+// Store — string-keyed global state (zustand-style)
+// ---------------------------------------------------------------------------
+
+/// A string-keyed global store, like a zustand store: define cells once
+/// (typically in `main`) under a string key, then read/write them anywhere —
+/// components, effects, handlers — through the key.
+///
+/// Reads are reactive: `store.get("count")` inside a view/effect subscribes to
+/// that cell, `store.set("count", ..)` re-runs it (and repaints).
+///
+/// ```ignore
+/// let store = Store::new();
+/// store.init("count", 0);            // define in main
+///
+/// // anywhere else (component, handler, effect):
+/// let n: i32 = store.get("count").unwrap_or(0);
+/// store.set("count", n + 1);
+/// ```
+///
+/// `Store` is `Clone` (it's a shared handle — cloning does not copy the data),
+/// so capture it in the view closure and every component.
+#[derive(Clone)]
+pub struct Store {
+    cells: Rc<RefCell<HashMap<String, Box<dyn std::any::Any>>>>,
+}
+
+impl Default for Store {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for Store {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let keys: Vec<String> = self.cells.borrow().keys().cloned().collect();
+        write!(f, "Store({:?})", keys)
+    }
+}
+
+impl Store {
+    /// Creates an empty store.
+    pub fn new() -> Self {
+        Self { cells: Rc::new(RefCell::new(HashMap::new())) }
+    }
+
+    /// Defines (or resets) the cell under `key` with `initial` and returns a
+    /// direct reactive handle to it.
+    pub fn init<T: 'static>(&self, key: impl Into<String>, initial: T) -> State<T> {
+        let state = State::new(initial);
+        self.cells.borrow_mut().insert(key.into(), Box::new(state));
+        state
+    }
+
+    /// Reactive handle for the cell under `key`. Panics if the key was never
+    /// defined (with [`Store::init`]) or the type doesn't match.
+    pub fn state<T: 'static>(&self, key: &str) -> State<T> {
+        self.try_state::<T>(key)
+            .unwrap_or_else(|| panic!("store: no cell named \"{key}\" of this type"))
+    }
+
+    /// Like [`Store::state`] but returns `None` for missing/mismatched keys.
+    pub fn try_state<T: 'static>(&self, key: &str) -> Option<State<T>> {
+        self.cells
+            .borrow()
+            .get(key)?
+            .downcast_ref::<State<T>>()
+            .copied()
+    }
+
+    /// Tracked read of the cell under `key` — subscribes the running
+    /// effect/render to it. Returns `None` if the key is missing or the type
+    /// doesn't match.
+    pub fn get<T: Clone + 'static>(&self, key: &str) -> Option<T> {
+        self.try_state::<T>(key).map(|s| s.get())
+    }
+
+    /// Tracked read with a fallback (the common shape in views).
+    pub fn get_or<T: Clone + 'static>(&self, key: &str, fallback: T) -> T {
+        self.get::<T>(key).unwrap_or(fallback)
+    }
+
+    /// Writes the cell under `key` and notifies subscribers. Returns `false`
+    /// if the key is missing or the type doesn't match.
+    pub fn set<T: 'static>(&self, key: &str, value: T) -> bool {
+        match self.try_state::<T>(key) {
+            Some(s) => {
+                s.set(value);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Mutates the cell under `key` in place. Returns `false` if the key is
+    /// missing or the type doesn't match.
+    pub fn update<T: 'static>(&self, key: &str, f: impl FnOnce(&mut T)) -> bool {
+        match self.try_state::<T>(key) {
+            Some(s) => {
+                s.update(f);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// Registers a hook called after every flush in which effects ran.

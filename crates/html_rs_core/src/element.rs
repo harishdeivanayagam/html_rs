@@ -35,6 +35,8 @@ pub type ClickHandler = Rc<dyn Fn(&PointerEvent)>;
 pub type InputHandler = Rc<dyn Fn(&str)>;
 pub type EnterHandler = Rc<dyn Fn(&str)>;
 pub type KeyHandler = Rc<dyn Fn(&KeyEventInfo)>;
+/// Change callback (`onchange` on `<select>`), receiving the new value.
+pub type ChangeHandler = Rc<dyn Fn(&str)>;
 
 /// Wraps a user closure into a click handler. Used by the `ui!` macro.
 pub fn click(f: impl Fn(&PointerEvent) + 'static) -> ClickHandler {
@@ -50,6 +52,10 @@ pub fn enter(f: impl Fn(&str) + 'static) -> EnterHandler {
 }
 /// Wraps a user closure into a key handler (`onkeydown`).
 pub fn key(f: impl Fn(&KeyEventInfo) + 'static) -> KeyHandler {
+    Rc::new(f)
+}
+/// Wraps a user closure into a change handler (`onchange` on `<select>`).
+pub fn change(f: impl Fn(&str) + 'static) -> ChangeHandler {
     Rc::new(f)
 }
 
@@ -117,6 +123,7 @@ pub struct Element {
     pub on_input: Option<InputHandler>,
     pub on_enter: Option<EnterHandler>,
     pub on_key: Option<KeyHandler>,
+    pub on_change: Option<ChangeHandler>,
 }
 
 impl Default for Element {
@@ -136,6 +143,7 @@ impl Element {
             on_input: None,
             on_enter: None,
             on_key: None,
+            on_change: None,
         }
     }
 
@@ -178,6 +186,11 @@ impl Element {
 
     pub fn on_key(mut self, h: KeyHandler) -> Self {
         self.on_key = Some(h);
+        self
+    }
+
+    pub fn on_change(mut self, h: ChangeHandler) -> Self {
+        self.on_change = Some(h);
         self
     }
 

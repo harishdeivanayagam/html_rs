@@ -30,12 +30,15 @@
 //! Trunk: `trunk serve 02_counter_app`.
 
 pub use html_rs_core::{
-    child_of, click, enter, input, key, text, Child, Element, EnterHandler, InputHandler,
-    KeyEventInfo, KeyHandler, MouseButton, Node, PointerEvent, TextNode,
+    change, child_of, click, enter, input, key, text, ChangeHandler, Child, ClickHandler, Element,
+    EnterHandler, InputHandler, KeyEventInfo, KeyHandler, MouseButton, Node, PointerEvent, TextNode,
 };
+pub use html_rs_core::{current_theme, resolve_token_color, set_theme_mode, Theme, ThemeMode};
 pub use html_rs_macro::ui;
 pub use html_rs_render as render;
-pub use html_rs_state::{batch, create_effect, create_memo, set_flush_hook, untrack, Effect, State};
+pub use html_rs_state::{
+    batch, create_effect, create_memo, set_flush_hook, untrack, Effect, State, Store,
+};
 
 mod runtime;
 pub use runtime::{launch, App};

@@ -8,6 +8,7 @@
 //! text:   text-{color|size}, font-{weight}, underline, line-through, text-{left,center,right}, opacity-*
 
 use crate::colors::resolve_color;
+use crate::theme::resolve_token_color;
 use taffy::geometry::Point;
 use taffy::prelude::*;
 use taffy::style::{
@@ -19,6 +20,31 @@ use taffy::style_helpers::{TaffyGridLine, TaffyGridSpan};
 
 /// sRGB color as straight-alpha floats in `0..=1`.
 pub type Rgba = [f32; 4];
+
+/// Splits a Tailwind alpha modifier: `"primary/90"` → `("primary", 0.9)`,
+/// `"blue-500"` → `("blue-500", 1.0)`.
+fn split_alpha(name: &str) -> (&str, f32) {
+    match name.rsplit_once('/') {
+        Some((base, pct)) => match pct.parse::<f32>() {
+            Ok(p) => (base, (p / 100.0).clamp(0.0, 1.0)),
+            Err(_) => (name, 1.0),
+        },
+        None => (name, 1.0),
+    }
+}
+
+/// Resolves a color class value: plain Tailwind palette colors first, then
+/// shadcn theme tokens (`bg-primary`, `text-muted-foreground`), applying any
+/// `/N` alpha modifier.
+fn resolve_color_value(name: &str) -> Option<Rgba> {
+    let (base, alpha) = split_alpha(name);
+    resolve_color(base)
+        .or_else(|| resolve_token_color(base))
+        .map(|mut c| {
+            c[3] *= alpha;
+            c
+        })
+}
 
 /// Default window clear color (slate-900).
 pub const DEFAULT_BG: Rgba = [
@@ -83,6 +109,10 @@ pub struct StyleOut {
     pub mono: bool,
     /// Classes prefixed `hover:` — applied while the element is hovered.
     pub hover: Vec<String>,
+    /// `overflow-auto` / `overflow-y-auto`: children scroll vertically.
+    pub scroll_y: bool,
+    /// `overflow-hidden`: children clip to the border box (no scroll).
+    pub clip: bool,
 }
 
 impl StyleOut {
@@ -102,6 +132,8 @@ impl StyleOut {
             cursor_pointer: false,
             mono: false,
             hover: Vec::new(),
+            scroll_y: false,
+            clip: false,
         }
     }
 
@@ -183,46 +215,86 @@ pub fn parse_classes(classes: &[String], scale: f32) -> StyleOut {
 /// Browser-style default classes for semantic tags, applied **before** the
 /// element's own classes (user classes win — later assignments overwrite).
 ///
+/// Defaults use shadcn Slate theme token classes (`bg-primary`,
+/// `text-muted-foreground`, `border-input`, …) so every component is themed
+/// out of the box in both light and dark mode; plain Tailwind classes in the
+/// user's class list overwrite any token (`<button class="bg-blue-600">`).
+///
 /// These give the semantic tags their expected look with zero user styling:
 /// lists stack vertically, links underline, `<kbd>`/`<code>` go monospace,
 /// table rows/cells line up, `<select>` looks like a control, etc.
-pub fn tag_default_classes(tag: &str) -> &'static [&'static str] {
-    match tag {
+pub fn tag_default_classes(tag: &str) -> Vec<String> {
+    let defaults: &[&str] = match tag {
+        // Headings: browser-like scale (Tailwind sizes), bold, margins.
+        "h1" => &["text-4xl", "font-bold", "my-4"],
+        "h2" => &["text-3xl", "font-bold", "my-3"],
+        "h3" => &["text-2xl", "font-semibold", "my-3"],
+        "h4" => &["text-xl", "font-semibold", "my-2"],
+        "h5" => &["text-lg", "font-semibold", "my-2"],
+        "h6" => &["text-base", "font-semibold", "my-2"],
+        // Paragraph: block of running text.
+        "p" => &["my-2"],
+        // `<text>`: plain run of text (a small block, default size).
+        "text" => &["my-1"],
+        // Form label: inline row for inputs (click targets the control).
+        "label" => &["flex", "items-center", "gap-2", "text-sm", "cursor-pointer"],
+        // Textarea: shadcn textarea — bordered box that hugs a default
+        // height; the painter draws the wrapped multi-line value inside.
+        "textarea" => &[
+            "w-full", "h-20", "px-3", "py-2", "text-sm", "text-foreground",
+            "bg-background", "border", "border-input", "rounded-md", "shrink-0",
+        ],
+        // Buttons follow the shadcn default variant: primary fill, medium
+        // text, subtle hover (primary at 90% opacity).
+        "button" => &[
+            "flex", "items-center", "justify-center", "gap-2", "h-10", "px-4", "py-2",
+            "rounded-md", "text-sm", "font-medium", "bg-primary", "text-primary-foreground",
+            "cursor-pointer", "shrink-0", "hover:bg-primary/90",
+        ],
         // Lists: vertical stack with left padding for the bullet gutter.
         "ul" | "ol" => &["flex-col", "gap-1", "pl-6", "my-2", "w-full"],
         // Links: classic link look + pointer cursor. (`href` is accepted but
         // not navigated — there is no web layer.)
-        "a" => &["underline", "text-blue-400", "cursor-pointer"],
+        "a" => &["underline", "text-primary", "cursor-pointer"],
         // Images: placeholder look until (or instead of) a decoded texture.
-        "img" => &["bg-slate-800", "rounded-lg", "shrink-0"],
-        // Select: control-like chrome; the painter overlays the selected
-        // option's text and a chevron. `option` children are hidden.
+        "img" => &["bg-muted", "rounded-lg", "shrink-0"],
+        // Select: shadcn select — bordered control on the background color;
+        // the painter overlays the selected option's text and a chevron.
+        // `option` children are hidden.
         "select" => &[
-            "flex", "items-center", "border", "border-slate-700", "rounded-xl",
-            "bg-slate-800", "px-4", "py-3", "cursor-pointer", "shrink-0",
+            "flex", "items-center", "h-10", "px-3", "py-2", "rounded-md", "text-sm",
+            "text-foreground", "bg-background", "border", "border-input",
+            "cursor-pointer", "shrink-0",
         ],
-        // Dialog: floating panel. Centered by the painter via absolute
-        // positioning + auto margins; hidden unless the `open` attr is set.
+        // Dialog: floating panel on the background color. Centered by the
+        // painter via absolute positioning + auto margins; hidden unless
+        // the `open` attr is set.
         "dialog" => &[
-            "flex-col", "gap-4", "bg-slate-800", "border", "border-slate-700",
-            "rounded-2xl", "p-8",
+            "flex-col", "gap-4", "bg-background", "text-foreground",
+            "border", "border-border", "rounded-lg", "p-6",
         ],
         // Table: rows stack, cells flex equally so columns line up.
         "table" => &["flex-col", "w-full"],
         "thead" | "tbody" | "tfoot" => &["flex-col", "w-full"],
         "tr" => &["flex-row", "w-full"],
-        "td" => &["flex-1", "px-3", "py-2"],
-        "th" => &["flex-1", "px-3", "py-2", "font-bold", "text-left"],
+        "td" => &["flex-1", "px-3", "py-2", "text-foreground"],
+        "th" => &["flex-1", "px-3", "py-2", "font-medium", "text-muted-foreground", "text-left"],
         // Semantic text blocks.
-        "blockquote" => &["pl-4", "my-2", "text-slate-400"],
+        "blockquote" => &["pl-4", "my-2", "text-muted-foreground"],
         "nav" => &["flex-row", "items-center", "gap-4", "w-full"],
         "kbd" => &[
-            "font-mono", "border", "border-slate-600", "rounded-md",
-            "px-2", "py-0.5", "bg-slate-900", "text-sm",
+            "font-mono", "border", "border-border", "rounded-md", "px-2", "py-0.5",
+            "bg-muted", "text-muted-foreground", "text-sm",
         ],
-        "code" => &["font-mono", "bg-slate-800", "rounded-md", "px-1.5", "py-0.5"],
+        "code" => &[
+            "font-mono", "bg-muted", "text-muted-foreground", "rounded-md", "px-1.5", "py-0.5",
+        ],
+        // Progress: slim rounded track (primary fill is painted over it);
+        // the painter overlays the fill quad.
+        "progress" => &["w-full", "h-2", "my-2", "rounded-full", "bg-secondary", "shrink-0"],
         _ => &[],
-    }
+    };
+    defaults.iter().map(|s| s.to_string()).collect()
 }
 
 fn px(n: f32, scale: f32) -> LengthPercentage {
@@ -273,7 +345,13 @@ fn apply(out: &mut StyleOut, class: &str, scale: f32) {
         "justify-around" => out.taffy.justify_content = Some(JustifyContent::SPACE_AROUND),
         "justify-evenly" => out.taffy.justify_content = Some(JustifyContent::SPACE_EVENLY),
         "overflow-hidden" => {
-            out.taffy.overflow = Point { x: Overflow::Hidden, y: Overflow::Hidden }
+            out.taffy.overflow = Point { x: Overflow::Hidden, y: Overflow::Hidden };
+            out.clip = true;
+        }
+        "overflow-auto" | "overflow-y-auto" => {
+            out.taffy.overflow = Point { x: Overflow::Hidden, y: Overflow::Scroll };
+            out.scroll_y = true;
+            out.clip = true;
         }
         "cursor-pointer" => out.cursor_pointer = true,
         "underline" => out.decoration = Some(Decoration::Underline),
@@ -450,7 +528,7 @@ fn apply(out: &mut StyleOut, class: &str, scale: f32) {
             out.border_width = Some(n * scale);
             return;
         }
-        if let Some(c) = resolve_color(rest) {
+        if let Some(c) = resolve_color_value(rest) {
             out.border_color = Some(c);
             return;
         }
@@ -458,7 +536,7 @@ fn apply(out: &mut StyleOut, class: &str, scale: f32) {
 
     // ----- text-* (color first, then size) -----
     if let Some(rest) = class.strip_prefix("text-") {
-        if let Some(c) = resolve_color(rest) {
+        if let Some(c) = resolve_color_value(rest) {
             out.color = Some(c);
             return;
         }
@@ -482,7 +560,7 @@ fn apply(out: &mut StyleOut, class: &str, scale: f32) {
 
     // ----- bg-* -----
     if let Some(rest) = class.strip_prefix("bg-") {
-        if let Some(c) = resolve_color(rest) {
+        if let Some(c) = resolve_color_value(rest) {
             out.bg = Some(c);
             return;
         }
@@ -578,9 +656,13 @@ fn parse_dimension(rest: &str, scale: f32) -> Option<Dimension> {
         "full" => return Some(Dimension::percent(1.0)),
         "auto" => return Some(Dimension::auto()),
         "screen" => return None, // needs window size; not supported
+        // `w-px` is 1 device CSS px (not one spacing unit).
+        "px" => return Some(Dimension::length(scale)),
         _ => {}
     }
-    parse_num(rest).map(|n| Dimension::length(n * scale))
+    // Tailwind spacing scale: `N` units of 0.25rem = 4N CSS px (`w-72` = 288px),
+    // matching p-*/m-*/gap-* — times the device scale.
+    parse_num(rest).map(|n| Dimension::length(n * 4.0 * scale))
 }
 
 #[cfg(test)]
@@ -597,6 +679,18 @@ mod tests {
         assert_eq!(out.taffy.gap.height, LengthPercentage::length(16.0));
         assert_eq!(out.taffy.padding.top, LengthPercentage::length(32.0));
         assert_eq!(out.taffy.size.width, Dimension::percent(1.0));
+    }
+
+    /// `w-*`/`h-*` numbers use the Tailwind spacing scale (4px per unit),
+    /// consistent with p-*/m-*/gap-*.
+    #[test]
+    fn sizing_uses_spacing_scale() {
+        let out = parse_classes(&["w-72".into()], 1.0);
+        assert_eq!(out.taffy.size.width, Dimension::length(288.0)); // 72 × 4
+        let out = parse_classes(&["h-2".into()], 1.0);
+        assert_eq!(out.taffy.size.height, Dimension::length(8.0)); // 2 × 4
+        let out = parse_classes(&["w-px".into()], 1.0);
+        assert_eq!(out.taffy.size.width, Dimension::length(1.0));
     }
 
     #[test]
@@ -658,5 +752,99 @@ mod tests {
         // row-start-1 → place at line 1
         assert_eq!(out.taffy.grid_row.start, GridPlacement::from_line_index(1));
         assert_eq!(out.taffy.gap.width, LengthPercentage::length(8.0));
+    }
+
+    /// shadcn token classes (`bg-primary`, `text-muted-foreground`,
+    /// `border-input`) resolve to the active theme's colors.
+    #[test]
+    fn theme_token_classes() {
+        let out = parse_classes(
+            &["bg-primary text-muted-foreground border border-input".into()],
+            1.0,
+        );
+        let dark = crate::theme::Theme::dark();
+        assert_eq!(out.bg, Some(dark.primary));
+        assert_eq!(out.color, Some(dark.muted_foreground));
+        assert_eq!(out.border_color, Some(dark.input));
+    }
+
+    /// `/N` alpha modifiers work on palette and token colors alike.
+    #[test]
+    fn alpha_modifiers() {
+        let out = parse_classes(&["bg-blue-500/50".into()], 1.0);
+        let mut c = resolve_color("blue-500").unwrap();
+        c[3] = 0.5;
+        assert_eq!(out.bg, Some(c));
+
+        let out = parse_classes(&["bg-primary/90".into()], 1.0);
+        let mut p = crate::theme::Theme::dark().primary;
+        p[3] = 0.9;
+        assert_eq!(out.bg, Some(p));
+    }
+
+    /// Component defaults use theme tokens; a plain Tailwind class in the
+    /// user's class list overwrites the token default.
+    #[test]
+    fn defaults_are_overwritable() {
+        let defaults = tag_default_classes("button");
+        assert!(defaults.iter().any(|c| c == "bg-primary"), "button defaults are themed");
+
+        let mut classes = tag_default_classes("button");
+        classes.push("bg-blue-600".into());
+        let out = parse_classes(&classes, 1.0);
+        assert_eq!(out.bg, resolve_color("blue-600"));
+    }
+
+    /// Headings scale like a browser (h1 biggest), `p`/`text` are plain
+    /// blocks, `label` is a clickable inline row.
+    #[test]
+    fn text_tag_defaults() {
+        let size = |tag: &str| {
+            let classes = tag_default_classes(tag);
+            parse_classes(&classes, 1.0).font_size
+        };
+        assert_eq!(size("h1"), Some(36.0));
+        assert!(size("h1") > size("h2"));
+        assert!(size("h2") > size("h3"));
+        assert!(size("h3") > size("h4"));
+        assert!(size("h4") > size("h5"));
+        assert!(size("h5") > size("h6"));
+        assert_eq!(size("h6"), Some(16.0));
+        assert_eq!(size("p"), None, "paragraph is default size");
+        // textarea: bordered box with a default height (taffy needs one).
+        let ta = tag_default_classes("textarea");
+        assert!(ta.contains(&"border".to_string()) && ta.contains(&"h-20".to_string()));
+        assert_eq!(parse_classes(&ta, 1.0).taffy.size.height, taffy::Dimension::length(80.0), "h-20 = 80px");
+        assert_eq!(size("text"), None);
+
+        // Bold headings.
+        let h1 = parse_classes(&tag_default_classes("h1"), 1.0);
+        assert_eq!(h1.font_weight, Some(700));
+
+        // Label: a flex row with pointer cursor.
+        let label = parse_classes(&tag_default_classes("label"), 1.0);
+        assert!(label.cursor_pointer, "label is clickable");
+        assert_eq!(label.taffy.display, Display::Flex);
+
+        // Links keep the classic look.
+        let a = parse_classes(&tag_default_classes("a"), 1.0);
+        assert_eq!(a.color, resolve_color_value("primary"));
+    }
+
+    /// The shadcn outline button (tag defaults + outline variant classes)
+    /// keeps readable text (primary-foreground) on the background fill with
+    /// a visible border.
+    #[test]
+    fn outline_button_visible() {
+        let mut classes = tag_default_classes("button");
+        for c in "h-9 px-4 py-2 rounded-md text-sm font-medium cursor-pointer shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground".split(' ') {
+            classes.push(c.to_string());
+        }
+        let out = parse_classes(&classes, 1.0);
+        let p = out.paint(false);
+        assert_eq!(p.color, resolve_color_value("primary-foreground"), "outline text stays primary-foreground");
+        assert_eq!(p.bg, resolve_color_value("background"));
+        assert_eq!(p.border_color, resolve_color_value("input"), "outline border uses the input token");
+        assert!(p.border_width > 0.0);
     }
 }

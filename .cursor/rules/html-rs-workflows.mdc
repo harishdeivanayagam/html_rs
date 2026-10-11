@@ -16,7 +16,7 @@ cargo test --workspace               # unit tests (state runtime, tailwind compi
 cargo run --bin 01_hello_world
 cargo run --bin 02_counter_app
 cargo run --bin 03_todo_app
-cargo run --bin 04_elements
+cargo run --bin 04_all_elements
 ```
 
 ## Web (Trunk + wasm32)
@@ -28,15 +28,20 @@ Each example has its own HTML shell in `web/` that selects the bin via `data-bin
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo install trunk --locked
-trunk serve web/02_counter_app.html   # default target, serves on :8080
-trunk serve web/01_hello_world.html
-trunk serve web/03_todo_app.html
-trunk build --release web/03_todo_app.html   # output in dist/
+# Always test interactively with --release: debug-profile wasm is 10-50x
+# slower (typing/clicking feels "extremely slow" without it).
+trunk serve --release web/02_counter_app.html   # serves on :8080
+trunk serve --release web/01_hello_world.html
+trunk serve --release web/03_todo_app.html
+trunk build --release -d dist/04_all_elements --public-url /dist/04_all_elements/ web/04_all_elements.html
 ```
 
 The default target in `Trunk.toml` is `web/02_counter_app.html`. The `web/*.html`
 shells load the Rust bin with `<link data-trunk data-type="rust" data-bin="..."/>`;
-add a new shell file per new example bin.
+add a new shell file per new example bin. `trunk build --release` produces ~3.5 MB
+wasm for the all-elements page vs ~6.3 MB debug — and interaction latency to match.
+When serving the repo root (`python3 -m http.server 8125`), pass
+`--public-url /dist/<page>/` so asset paths resolve.
 
 ## Gotchas
 

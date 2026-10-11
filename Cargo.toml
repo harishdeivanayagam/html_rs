@@ -35,8 +35,8 @@ path = "examples/02_counter_app.rs"
 name = "03_todo_app"
 path = "examples/03_todo_app.rs"
 [[bin]]
-name = "04_elements"
-path = "examples/04_elements.rs"
+name = "04_all_elements"
+path = "examples/04_all_elements.rs"
 
 [dependencies]
 html_rs_state = { path = "crates/html_rs_state" }
@@ -47,14 +47,48 @@ winit = "0.30"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "0.4"
+# System clipboard for copy/cut/paste (text only; no image-data dep).
+arboard = { version = "3", default-features = false, features = ["windows-sys", "wayland-data-control"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
-web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement", "Navigator", "Clipboard"] }
+# `js-sys` types (e.g. `Promise` from `navigator.clipboard.readText()`).
+js-sys = "0.3"
+# `Instant` that maps to the browser's clock on wasm (winit's ControlFlow
+# needs it for `WaitUntil`); std::time::Instant on native.
+web-time = "1"
 
 [profile.dev.package.wgpu-core]
 opt-level = 1
 [profile.dev.package.wgpu-types]
 opt-level = 1
+
+# Speed up debug *runs*: the heavy deps (wgpu, cosmic-text, glyphon,
+# taffy) are built optimized while workspace crates stay debuggable —
+# interaction latency is dominated by those deps.
+[profile.dev.package."*"]
+opt-level = 2
+
+# The workspace crates' own paint/diff code also runs per interaction —
+# keep it at least lightly optimized (big difference in debug wasm), while
+# staying fast enough to recompile during development.
+[profile.dev.package.html_rs]
+opt-level = 1
+[profile.dev.package.html_rs_core]
+opt-level = 1
+[profile.dev.package.html_rs_render]
+opt-level = 1
+[profile.dev.package.html_rs_state]
+opt-level = 1
+[profile.dev.package.html_rs_macro]
+opt-level = 1
+
+# Web (Trunk) builds ship from the release profile:
+#   trunk build --release web/04_all_elements.html
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

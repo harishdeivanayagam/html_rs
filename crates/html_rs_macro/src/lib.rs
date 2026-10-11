@@ -25,6 +25,7 @@ const EVENTS: &[(&str, &str, &str)] = &[
     ("oninput", "on_input", "str"),
     ("onenter", "on_enter", "str"),
     ("onkeydown", "on_key", "KeyEventInfo"),
+    ("onchange", "on_change", "str"),
 ];
 
 #[proc_macro]
@@ -196,7 +197,7 @@ impl Parser {
                         let _ = writeln!(code, "__el = __el.class({value});");
                     }
                     "value" => {
-                        let _ = writeln!(code, "__el = __el.value({value});");
+                        let _ = writeln!(code, "__el = __el.value(format!(\"{{}}\", {value}));");
                     }
                     "placeholder" => {
                         let _ = writeln!(code, "__el = __el.placeholder({value});");
@@ -205,7 +206,8 @@ impl Parser {
                     // some drive renderer behavior — `src`/`alt` for <img>,
                     // `type`/`checked` for <input>, `open` for <dialog>, ...).
                     // `format!` accepts literals, bools and Strings alike.
-                    "src" | "alt" | "href" | "type" | "checked" | "selected" | "open" => {
+                    "src" | "alt" | "href" | "type" | "checked" | "selected" | "open"
+                    | "max" | "min" | "selectable" => {
                         let _ = writeln!(
                             code,
                             "__el = __el.attr(\"{name}\", format!(\"{{}}\", {value}));"
@@ -217,7 +219,7 @@ impl Parser {
                     };
                     let handler = handler_code(value, event_ty);
                     let _ = writeln!(code, "__el = __el.{method}(::html_rs::{constructor}({handler}));",
-                        constructor = constructor_for(event_ty));
+                        constructor = constructor_for(name));
                 }
             }
         }
@@ -282,11 +284,13 @@ fn handler_code(value: &str, event_ty: &str) -> String {
     }
 }
 
-fn constructor_for(event_ty: &str) -> &'static str {
-    match event_ty {
-        "PointerEvent" => "click",
-        "str" => "input",
-        "KeyEventInfo" => "key",
+fn constructor_for(attr: &str) -> &'static str {
+    match attr {
+        "onclick" => "click",
+        "oninput" => "input",
+        "onenter" => "enter",
+        "onkeydown" => "key",
+        "onchange" => "change",
         _ => unreachable!(),
     }
 }
